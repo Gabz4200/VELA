@@ -11,6 +11,7 @@ dependencies = [
     "gradio",
     "huggingface-hub",
     "lm-eval",
+    "ninja",
     "numpy",
     "openai",
     "pandas",
@@ -26,6 +27,7 @@ dependencies = [
     "torch",
     "torchvision",
     "tqdm",
+    "tokenizers",
     "transformers",
     "unidecode",
     "wandb",
@@ -55,15 +57,16 @@ environments = [
 ]
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
-testpaths = ["tests"]
+pythonpath = ["VELA-v7"]
+testpaths = ["VELA-v7/tests"]
 filterwarnings = [
     "ignore:.*torch.jit.script_method.*",
     "ignore:.*pynvml.*",
 ]
 
 [tool.setuptools.packages.find]
-include = ["vela*"]
+where = ["VELA-v7"]
+include = ["src*", "tokenizer*", "app*", "eval*"]
 
 [tool.ruff]
 line-length = 100

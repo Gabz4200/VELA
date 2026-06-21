@@ -224,3 +224,8 @@ __marimo__/
 **/*.pth
 **/*.pt
 **/*.gguf
+
+# Custom ignored patterns
+.DS_Store
+wandb/
+

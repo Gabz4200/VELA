@@ -256,11 +256,15 @@ try:
     except RuntimeError:
         use_gpu = False
         
+    model_dir = os.path.dirname(__file__)
     if use_gpu:
         flags = ['-res-usage', f'-D_C_={HEAD_SIZE}', f"-D_CHUNK_LEN_={CHUNK_LEN}", "--use_fast_math", "-O3", "-Xptxas -O3", "--extra-device-vectorization"]
         load(
             name="wind_backstepping",
-            sources=[f'cuda/wkv7_cuda.cu', 'cuda/wkv7_op.cpp'],
+            sources=[
+                os.path.join(model_dir, '..', 'cuda', 'wkv7_cuda.cu'),
+                os.path.join(model_dir, '..', 'cuda', 'wkv7_op.cpp'),
+            ],
             is_python_module=False,
             verbose=True,
             extra_cflags=['-DUSE_CUDA'],
@@ -271,7 +275,7 @@ try:
         brand = _cpu_brand()
         load(
             name="wind_backstepping",
-            sources=['cuda/wkv7_op.cpp'],
+            sources=[os.path.join(model_dir, '..', 'cuda', 'wkv7_op.cpp')],
             is_python_module=False,
             verbose=True,
             extra_cflags=['-DNO_CUDA']
@@ -479,8 +483,15 @@ class RWKV_CMix_x070(nn.Module):
 # RWKV Block
 ########################################################################################################
 
+def block_attn_res(V_blocks, partial_block, proj, norm):
+    V = torch.cat([V_blocks, partial_block.unsqueeze(0)], dim=0)
+    K = norm(V)
+    logits = torch.einsum('d, n b t d -> n b t', proj.weight.squeeze(0), K)
+    h = torch.einsum('n b t, n b t d -> b t d', logits.softmax(0), V)
+    return h
+
 class Block(nn.Module):
-    def __init__(self, args, layer_id):
+    def __init__(self, args, layer_id, is_vtc=False):
         super().__init__()
         self.args = args
         self.layer_id = layer_id
@@ -492,15 +503,35 @@ class Block(nn.Module):
 
         self.att = RWKV_Tmix_x070(args, layer_id)
         self.ffn = RWKV_CMix_x070(args, layer_id)
-        
-    def forward(self, x, v_first):
-        if self.layer_id == 0:
-            x = self.ln0(x)
 
-        xx, v_first = self.att(self.ln1(x), v_first)
-        x = x + xx
-        x = x + self.ffn(self.ln2(x))
-        return x, v_first
+        if not hasattr(args, "n_attnres_blocks"):
+            args.n_attnres_blocks = 8
+        n_layers = args.n_vtc_layer if (is_vtc and hasattr(args, "n_vtc_layer")) else args.n_layer
+        self.layers_per_block = max(1, n_layers // args.n_attnres_blocks)
+
+        self.attn_res_proj = nn.Linear(args.n_embd, 1, bias=False)
+        self.attn_res_norm = nn.LayerNorm(args.n_embd)
+        self.mlp_res_proj = nn.Linear(args.n_embd, 1, bias=False)
+        self.mlp_res_norm = nn.LayerNorm(args.n_embd)
+        
+    def forward(self, V_blocks, partial_block, v_first):
+        if self.layer_id == 0:
+            partial_block = self.ln0(partial_block)
+
+        h = block_attn_res(V_blocks, partial_block, self.attn_res_proj, self.attn_res_norm)
+
+        if self.layer_id % self.layers_per_block == 0:
+            V_blocks = torch.cat([V_blocks, partial_block.unsqueeze(0)], dim=0)
+            partial_block = None
+
+        xx, v_first = self.att(self.ln1(h), v_first)
+        partial_block = partial_block + xx if partial_block is not None else xx
+
+        h = block_attn_res(V_blocks, partial_block, self.mlp_res_proj, self.mlp_res_norm)
+        xx_mlp = self.ffn(self.ln2(h))
+        partial_block = partial_block + xx_mlp
+
+        return V_blocks, partial_block, v_first
 
 
 class L2Wrap(torch.autograd.Function):
@@ -562,14 +593,16 @@ class RWKV(pl.LightningModule):
         if args.dropout > 0:
             x = self.drop0(x)
 
+        V_blocks = torch.empty(0, x.size(0), x.size(1), x.size(2), dtype=x.dtype, device=x.device)
+        partial_block = x
         v_first = torch.empty_like(x)
         for block in self.blocks:
             if args.grad_cp == 1:
-                x, v_first = deepspeed.checkpointing.checkpoint(block, x, v_first)
+                V_blocks, partial_block, v_first = deepspeed.checkpointing.checkpoint(block, V_blocks, partial_block, v_first)
             else:
-                x, v_first = block(x, v_first)
+                V_blocks, partial_block, v_first = block(V_blocks, partial_block, v_first)
 
-        x = self.ln_out(x)
+        x = self.ln_out(partial_block)
         x = self.head(x)
         return self.unpad(x, num_tokens_to_pad)
 
@@ -578,7 +611,7 @@ class VisualTokenCompressor(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.args = args
-        self.blocks = nn.ModuleList([Block(args, i) for i in range(args.n_vtc_layer)])
+        self.blocks = nn.ModuleList([Block(args, i, is_vtc=True) for i in range(args.n_vtc_layer)])
         self.ln_out = nn.LayerNorm(args.n_embd)
 
     def pad_left(self, x, num_tokens_to_pad):
@@ -605,21 +638,27 @@ class VisualTokenCompressor(nn.Module):
         )
         x = self.pad_left(x, num_tokens_to_pad)
 
+        V_blocks = torch.empty(0, x.size(0), x.size(1), x.size(2), dtype=x.dtype, device=x.device)
+        partial_block = x
         v_first = torch.empty_like(x)
         for i, block in enumerate(self.blocks):
             do_reverse = (i % 2 == 1)
             if do_reverse: # reverse
-                x, v_first = x.flip(1), v_first.flip(1)
+                V_blocks = V_blocks.flip(2)
+                partial_block = partial_block.flip(1)
+                v_first = v_first.flip(1)
 
             if args.grad_cp == 1:
-                x, v_first = deepspeed.checkpointing.checkpoint(block, x, v_first)
+                V_blocks, partial_block, v_first = deepspeed.checkpointing.checkpoint(block, V_blocks, partial_block, v_first)
             else:
-                x, v_first = block(x, v_first)
+                V_blocks, partial_block, v_first = block(V_blocks, partial_block, v_first)
             
             if do_reverse: # reverse back
-                x, v_first = x.flip(1), v_first.flip(1)
+                V_blocks = V_blocks.flip(2)
+                partial_block = partial_block.flip(1)
+                v_first = v_first.flip(1)
             
-        x = self.ln_out(x)
+        x = self.ln_out(partial_block)
         return self.unpad(x, num_tokens_to_pad)
 
 class MLPWithContextGating(nn.Module):

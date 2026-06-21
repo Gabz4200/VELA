@@ -36,7 +36,7 @@ VELA/
 ├── VELA-arch.png                # Architecture diagram
 ├── rwkv_emoji.png               # Logo
 ├── VELA-v7/
-│   └── v7.04/                   # Consolidated v7 release
+│   ├── VELA-v7/                 # VELA models based on RWKV-7
 │       ├── src/
 │       │   ├── model.py         # VELA and RWKV model definitions
 │       │   ├── dataset.py       # Multi-modal dataset and tokenization

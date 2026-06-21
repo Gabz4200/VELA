@@ -1,6 +1,6 @@
 """Stability tests: RWKV-7 backbone with real pretrained v7.00 weights.
 
-Loads VisualRWKV-v0700-0B1 weights into the v7.04 RWKV backbone, runs
+Loads VisualRWKV-v0700-0B1 weights into the VELA-v7 RWKV backbone, runs
 forward/backward passes on CPU, and verifies:
   - No NaN/Inf in output or gradients
   - Output magnitudes stay bounded
@@ -24,7 +24,7 @@ import torch
 import pytest
 import math
 
-WEIGHTS_PATH = "dummy_data/VisualRWKV-v0700-0B1-v1.0-20250109.pth"
+WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "..", "dummy_data/VisualRWKV-v0700-0B1-v1.0-20250109.pth")
 
 # Architecture derived from the checkpoint
 N_LAYER = 12
@@ -34,23 +34,24 @@ HEAD_SIZE = 64
 CTX_LEN = 128
 
 
-def build_args():
-    class Args:
-        pass
+from argparse import Namespace
 
-    a = Args()
+def build_args():
+    a = Namespace()
     a.n_layer = N_LAYER
     a.n_embd = N_EMBD
     a.vocab_size = VOCAB_SIZE
     a.dim_att = N_EMBD
-    a.dim_ffn = int(N_EMBD * 3.5 // 32 * 32)
+    a.dim_ffn = N_EMBD * 4
     a.head_size_a = HEAD_SIZE
     a.head_size_divisor = 8
-    a.dropout = 0
+    a.dropout = 0.0
     a.grad_cp = 0
     a.ctx_len = CTX_LEN
-    a.my_pile_stage = 0
+    a.my_pos_emb = 0
+    a.my_pile_stage = 1
     a.pre_ffn = 0
+    a.head_size = HEAD_SIZE
     return a
 
 
@@ -59,8 +60,11 @@ def load_rwkv_weights(model, path):
     sd = torch.load(path, map_location="cpu", weights_only=True)
     rwkv_sd = {k[5:]: v for k, v in sd.items() if k.startswith("rwkv.")}
     missing, unexpected = model.load_state_dict(rwkv_sd, strict=False)
-    # Allow only blocks.0.att.v* (block 0 has no value-residual LoRA)
-    unexpected = [k for k in missing if not k.startswith("blocks.0.att.v")]
+    # Allow only blocks.0.att.v* (block 0 has no value-residual LoRA) and our new res_proj/res_norm parameters
+    unexpected = [
+        k for k in missing
+        if not (k.startswith("blocks.0.att.v") or "res_proj" in k or "res_norm" in k)
+    ]
     assert not unexpected, f"Unexpected missing keys: {unexpected}"
     # Convert to bfloat16 to match checkpoint dtype and satisfy kernel assertion
     model.bfloat16()
@@ -151,14 +155,15 @@ def test_hidden_state_drift(model):
     with torch.no_grad():
         x = embed(model, input_ids)
         norms = []
+        V_blocks = torch.empty(0, x.size(0), x.size(1), x.size(2), dtype=x.dtype, device=x.device)
+        partial_block = x
         for i, block in enumerate(model.blocks):
             v_first = torch.empty_like(x)
-            x, v_first = block(x, v_first)
-            norms.append(x.norm(dim=-1).mean().item())
-        x = model.ln_out(x)
+            V_blocks, partial_block, v_first = block(V_blocks, partial_block, v_first)
+            norms.append(partial_block.norm(dim=-1).mean().item())
+        x = model.ln_out(partial_block)
         norms.append(x.norm(dim=-1).mean().item())
 
-    ratio = max(norms) / max(min(norms), 1e-8)
     finite = [n for n in norms if not math.isnan(n)]
     print(f"  Layer norms: min={min(finite):.4f} max={max(finite):.4f} "
           f"ratio={max(finite)/max(min(finite),1e-8):.2f} "
