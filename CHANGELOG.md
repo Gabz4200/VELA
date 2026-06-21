@@ -4,8 +4,12 @@ All notable changes to the VELA project will be documented in this file.
 
 ## [2026-06-21]
 
+### Added
+- Implemented **Block Attention Residuals (AttnRes)** natively inside the RWKV-7 block structure (`VELA-v7/src/model.py`). It fully replaces the standard additive residual connections. The mechanism uses a learned pseudo-query (`attn_res_proj` and `mlp_res_proj`) to select earlier representations from previous block chunks, passing states continuously using a `V_blocks` tensor array to support scaling to large models while perfectly preserving DeepSpeed checkpointing efficiency.
+
 ### Changed
-- Consolidated VELA-v7 codebase development around `v7.04`.
+- Finalized directory consolidation by moving `VELA-v7/v7.04/` contents directly to the `VELA-v7/` root. The codebase is now unversioned internally, stopping the nested `v7.xx` folder structure.
+- Updated `pyproject.toml` paths to correctly target the new `VELA-v7/` structure.
 - Updated root `README.md` directory structure documentation to reflect directory cleanup.
 - Cleaned error messages in `detect_gpu_backend()` and `_cpu_brand()` in `VELA-v7/v7.04/src/model.py` to remove external issue-tracker references.
 - Added weight-based stability tests for RWKV-7 backbone in `VELA-v7/v7.04/tests/test_with_weights.py`, verifying CPU kernel dispatch, forward/backward stability (no NaN/Inf), gradient flow, and hidden-state coherence with real v7.00 pretrained weights.

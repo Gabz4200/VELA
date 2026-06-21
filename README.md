@@ -21,6 +21,7 @@ The architecture combines a multi-scale vision backbone (SAM, DINOv2, SigLIP) wi
 - **Multi-Scale Vision Backbone**: Combines SAM (1024px), DINOv2 (448px), and SigLIP (448px) features for rich, multi-scale visual representations.
 - **Early Visual Fusion**: Visual tokens are injected at the embedding layer before the RWKV recurrence, enabling unified vision-language state from the first step.
 - **Linear-Time Inference**: Inherits RWKV's O(n) time complexity and O(1) memory — no quadratic attention bottleneck.
+- **Block Attention Residuals**: Replaces standard additive residual connections with **Block AttnRes**, which partitions layers into chunks and uses a learned, input-dependent cross-layer attention mechanism to selectively aggregate previous representations, solving the PreNorm hidden-state dilution problem.
 - **Multi-Resolution Support**: Dynamic tile splitting processes images at multiple aspect ratios (1:1, 1:2, 2:1, 1:3, 3:1).
 - **Action Output (v7.10+)**: Extends the unified recurrent model from perception and reasoning to action prediction for embodied AI tasks.
 - **Distributed Training**: Built on PyTorch Lightning with DeepSpeed ZeRO for multi-GPU training across model scales.
@@ -35,17 +36,16 @@ VELA/
 ├── LICENSE                      # Apache 2.0
 ├── VELA-arch.png                # Architecture diagram
 ├── rwkv_emoji.png               # Logo
-├── VELA-v7/
-│   ├── VELA-v7/                 # VELA models based on RWKV-7
-│       ├── src/
-│       │   ├── model.py         # VELA and RWKV model definitions
-│       │   ├── dataset.py       # Multi-modal dataset and tokenization
-│       │   ├── trainer.py       # Training loop and LR schedule callbacks
-│       │   └── utils.py         # Utility functions
-│       ├── app/                 # Inference demo / serving app
-│       ├── eval/                # Benchmark evaluation tools
-│       ├── train.py             # Training entry point
-│       └── evaluate.py          # Local evaluation entry point
+├── VELA-v7/                     # VELA models based on RWKV-7
+│   ├── src/
+│   │   ├── model.py             # VELA and RWKV model definitions
+│   │   ├── dataset.py           # Multi-modal dataset and tokenization
+│   │   ├── trainer.py           # Training loop and LR schedule callbacks
+│   │   └── utils.py             # Utility functions
+│   ├── app/                     # Inference demo / serving app
+│   ├── eval/                    # Benchmark evaluation tools
+│   ├── train.py                 # Training entry point
+│   └── evaluate.py              # Local evaluation entry point
 ├── cuda/                        # CUDA kernels (wkv7)
 │   ├── wkv7_cuda.cu
 │   └── wkv7_op.cpp
