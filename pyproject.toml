@@ -18,7 +18,7 @@ dependencies = [
     "pillow",
     "pycocoevalcap",
     "pymupdf",
-    "pynvml",
+    "nvidia-ml-py",
     "pytorch-lightning",
     "rouge",
     "rwkv",
@@ -32,7 +32,9 @@ dependencies = [
     "unidecode",
     "wandb",
     "ggml-python",
-    "pytest"
+    "pytest",
+    "matplotlib",
+    "torchao",
 ]
 
 [[tool.uv.index]]

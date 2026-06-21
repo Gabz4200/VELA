@@ -6,9 +6,15 @@ All notable changes to the VELA project will be documented in this file.
 
 ### Added
 - Implemented **Block Attention Residuals (AttnRes)** natively inside the RWKV-7 block structure (`VELA-v7/src/model.py`). It fully replaces the standard additive residual connections. The mechanism uses a learned pseudo-query (`attn_res_proj` and `mlp_res_proj`) to select earlier representations from previous block chunks, passing states continuously using a `V_blocks` tensor array to support scaling to large models while perfectly preserving DeepSpeed checkpointing efficiency.
+- Replaced the custom/external vision encoder with a locally-vendored **SigLino** model (distilled from DINOv3 and SigLIP2) supporting optimized CPU (compiled SDPA) and GPU (flex_attention) attention routing.
+- Integrated optional **torchao** weight quantization support for the SigLino vision encoder (CUDA int4 weight-only and CPU int8 weight-only) during model load.
+- Added a PCA visualization script (`VELA-v7/eval/pca_vis.py`) allowing visual analysis of patch features across SigLino, SigLIP2, and DINOv3 with support for both local checkpoints and Hugging Face Hub repos, custom 2-row layout rendering, dynamic resolution scaling, and torchao quantization.
 
 ### Changed
 - Finalized directory consolidation by moving `VELA-v7/v7.04/` contents directly to the `VELA-v7/` root. The codebase is now unversioned internally, stopping the nested `v7.xx` folder structure.
+- Refactored activation and tensor functions in SigLino model modules to use native PyTorch operators: replaced `PytorchGELUTanh` with `nn.GELU(approximate="tanh")` and replaced custom `repeat_kv` with `torch.repeat_interleave`.
+- Replaced deprecated `pynvml` dependency with the official `nvidia-ml-py` library in `pyproject.toml` to eliminate import deprecation warnings.
+- Updated PCA visualization script to correctly pass `max_pixels` to the model loader and increased default max patches to `1024` to resolve map pixelation.
 - Updated `pyproject.toml` paths to correctly target the new `VELA-v7/` structure.
 - Updated root `README.md` directory structure documentation to reflect directory cleanup.
 - Cleaned error messages in `detect_gpu_backend()` and `_cpu_brand()` in `VELA-v7/v7.04/src/model.py` to remove external issue-tracker references.
@@ -16,7 +22,7 @@ All notable changes to the VELA project will be documented in this file.
 - Added `filterwarnings` to `pyproject.toml` pytest config for upstream deprecation warnings.
 
 ### Verified
-- All 4 stability tests pass end-to-end on CPU with real v7.00 pretrained weights.
+- All 6 stability and regression tests pass end-to-end on CPU (including CPU quantization forward pass).
 - C++ CPU kernel (`WindBackstepping`) compiles and dispatches correctly; pure-PyTorch fallback available.
 - Core imports (`src.model`, `app.modeling_rwkv`) load without errors; all entry-point scripts compile.
 - Forward pass produces finite output (μ=-1.5, σ=2.2, max|·|=15.6) with no NaN/Inf.

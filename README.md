@@ -18,7 +18,8 @@ The architecture combines a multi-scale vision backbone (SAM, DINOv2, SigLIP) wi
 
 ## Key Features
 
-- **Multi-Scale Vision Backbone**: Combines SAM (1024px), DINOv2 (448px), and SigLIP (448px) features for rich, multi-scale visual representations.
+- **Multi-Scale Vision Backbone**: Combines SAM (1024px), DINOv2 (448px), and **SigLino** (from tiiuae/siglino) features for rich, multi-scale visual representations. SigLino is locally vendored and uses custom optimized kernels (compiled SDPA on CPU, flex_attention on CUDA).
+- **Weight Quantization**: Integrates optional **torchao** weight quantization support (CUDA int4 weight-only and CPU int8 weight-only) for efficient low-memory footprint.
 - **Early Visual Fusion**: Visual tokens are injected at the embedding layer before the RWKV recurrence, enabling unified vision-language state from the first step.
 - **Linear-Time Inference**: Inherits RWKV's O(n) time complexity and O(1) memory — no quadratic attention bottleneck.
 - **Block Attention Residuals**: Replaces standard additive residual connections with **Block AttnRes**, which partitions layers into chunks and uses a learned, input-dependent cross-layer attention mechanism to selectively aggregate previous representations, solving the PreNorm hidden-state dilution problem.
@@ -43,7 +44,7 @@ VELA/
 │   │   ├── trainer.py           # Training loop and LR schedule callbacks
 │   │   └── utils.py             # Utility functions
 │   ├── app/                     # Inference demo / serving app
-│   ├── eval/                    # Benchmark evaluation tools
+│   ├── eval/                    # Benchmark evaluation tools (including PCA visualization)
 │   ├── train.py                 # Training entry point
 │   └── evaluate.py              # Local evaluation entry point
 ├── cuda/                        # CUDA kernels (wkv7)
@@ -66,6 +67,34 @@ uv sync
 
 # Or with pip
 pip install -e .
+```
+
+## PCA Feature Visualization
+
+To visualize the patch features learned by the SigLino vision encoder compared to SigLIP2 and DINOv3, you can use the PCA visualization tool:
+
+```bash
+# Run on CPU with a HuggingFace hub model (with optional torchao int8 CPU weight-only quantization)
+python VELA-v7/eval/pca_vis.py \
+  --hub_repo tiiuae/siglino-30M \
+  --config_name dense-30M \
+  --device cpu \
+  --quantize \
+  --input_dir VELA-v7/dummy_data/images/textvqa/train_images \
+  --output_path VELA-v7/eval/pca_out \
+  --num_samples 5 \
+  --max_num_patches 1024
+
+# Run on CUDA (with optional torchao int4 weight quantization)
+python VELA-v7/eval/pca_vis.py \
+  --hub_repo tiiuae/siglino-0.6B \
+  --config_name dense-0.6B \
+  --device cuda \
+  --quantize \
+  --input_dir /path/to/images \
+  --output_path /path/to/output \
+  --num_samples 10 \
+  --max_num_patches 1024
 ```
 
 ## References

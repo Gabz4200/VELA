@@ -222,12 +222,17 @@ class MyDataset(Dataset):
             image_folder = Path(args.image_folder)
             image = Image.open(image_folder / sample['image']).convert("RGB")
             regions = image_to_regions(image, (crop_size['width'], crop_size['height']))
-            images = args.image_processor.preprocess(regions, return_tensors='pt')['pixel_values']
+            processed = args.image_processor.preprocess(regions, return_tensors='pt')
+            images = processed['pixel_values']
+            spatial_shapes = processed.get('spatial_shapes', None)
+            padding_mask = processed.get('padding_mask', None)
             # 
             conversations = process_image_tokens_in_conversations(copy.deepcopy(sample["conversations"]),
                                                                   num_regions=len(regions))
         else:
             conversations = process_tokens_in_conversations(copy.deepcopy(sample["conversations"]))
+            spatial_shapes = None
+            padding_mask = None
 
         data_dict = preprocess(
             conversations,
@@ -240,6 +245,10 @@ class MyDataset(Dataset):
         # image exist in the data
         if 'image' in sample:
             data_dict['images'] = images
+            if spatial_shapes is not None:
+                data_dict['spatial_shapes'] = spatial_shapes
+            if padding_mask is not None:
+                data_dict['padding_mask'] = padding_mask
 
         # add sample_id
         data_dict['sample_id'] = str(sample['sample_id']) if 'sample_id' in sample else str(sample['id'])

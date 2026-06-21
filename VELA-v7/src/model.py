@@ -5,21 +5,19 @@
 import os, math, gc, importlib, functools, platform, subprocess
 from pathlib import Path
 import torch
-# torch._C._jit_set_profiling_executor(True)
-# torch._C._jit_set_profiling_mode(True)
 import torch.nn as nn
 from torch.nn import functional as F
 import pytorch_lightning as pl
 from pytorch_lightning.utilities import rank_zero_info, rank_zero_warn
 from pytorch_lightning.strategies import DeepSpeedStrategy
-from transformers import SiglipVisionModel
 if importlib.util.find_spec('deepspeed'):
     import deepspeed
     from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 
-# from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
 from .dataset import IGNORE_INDEX, IMAGE_TOKEN_INDEX, STOP_TOKEN_INDEX
 from .utils import compress_parameter_names
+from .siglino import SigLino, SigLinoImageProcessor, load_siglino_from_hub
+from .siglino.configs import siglino_configs
 
 def __nop(ob):
     return ob
@@ -681,16 +679,35 @@ class VELA(pl.LightningModule):
         self.rwkv = RWKV(args)
         if len(args.load_model) > 0:
             self.load_rwkv_from_pretrained(args.load_model)
-        self.vit = SiglipVisionModel.from_pretrained(
-            args.vision_tower_path,
-            attn_implementation="sdpa",
-            )
+
+        # Determine dtype: FP16 on CUDA, FP32 on CPU
+        if torch.cuda.is_available():
+            self.vit_dtype = torch.float16
+        else:
+            self.vit_dtype = torch.float32
+
+        # Load SigLino from HuggingFace Hub using our local vendored code
+        self.vit, self.vit_processor = load_siglino_from_hub(
+            repo_id=args.vision_tower_path,
+            device="cpu",       # always load on CPU first; move after
+            dtype=self.vit_dtype,
+        )
+        # Read dim before torch.compile potentially wraps self.vit
+        hidden_size: int = self.vit.args.dim
+        # Move to the right device (CUDA if available)
+        if torch.cuda.is_available():
+            self.vit = self.vit.cuda()
+
+        # Tier-2 CPU optimisation: torch.compile cannot be used here because
+        # the inductor will trace into SigLino's attention and attempt to lower
+        # flex_attention (which requires CUDA) even with our runtime guards.
+        # CPU inference runs in eager mode; it's still fast enough for inference.
+        # CUDA path: model is already in FP16 on device, inference is fast.
         self.freeze_vit()
-        self.proj = MLPWithContextGating(self.vit.config.hidden_size, args.n_embd)
-        # vtc -> visual token compressor
-        # self.pool = nn.AdaptiveAvgPool2d(int(args.num_token_per_image ** 0.5))
+
+        self.proj = MLPWithContextGating(hidden_size, args.n_embd)
         self.vtc = VisualTokenCompressor(args)
-        # self.init_vtc_weight() # call after loading vela
+        # self.init_vtc_weight()  # call after loading vela
     
     def init_vtc_weights(self):
         # Copy weights from rwkv to vtc
@@ -793,14 +810,37 @@ class VELA(pl.LightningModule):
         image_features = self.pool(image_features).view(B, D, -1).permute(0, 2, 1)
         return image_features
     
-    def encode_images(self, images):
-        B, N, C, H, W = images.shape
-        images = images.view(B*N, C, H, W)
-        image_features = self.vit(images).last_hidden_state
+    def encode_images(self, images, spatial_shapes=None, padding_mask=None):
+        if images.dim() == 5:
+            # Traditional format: [B, N, C, H, W] — pixel images, patchify first
+            B, N, C, H, W = images.shape
+            images = images.view(B * N, C, H, W)
+        elif images.dim() == 4:
+            # Patchified format from SigLinoImageProcessor: [B, N, L, D]
+            B, N, L, D = images.shape
+            images = images.view(B * N, L, D)
+            if spatial_shapes is not None and spatial_shapes.dim() == 3:
+                spatial_shapes = spatial_shapes.view(B * N, -1)
+            if padding_mask is not None and padding_mask.dim() == 3:
+                padding_mask = padding_mask.view(B * N, -1)
+        else:
+            raise ValueError(f"Unexpected images shape: {images.shape}")
+
+        # Call SigLino directly; compile=False disables internal flex compilation
+        # (we use torch.compile at the module level on CPU instead)
+        vit_outputs = self.vit(
+            pixel_values=images,
+            spatial_shapes=spatial_shapes,
+            padding_mask=padding_mask,
+            compile=torch.cuda.is_available(),  # flex compile only on CUDA
+        )
+
+        # SigLino always returns a dict with patch_features
+        image_features = vit_outputs["patch_features"]["siglino"]  # (B*N, L, dim)
+
         _, L, D = image_features.shape
         image_features = image_features.view(B, N, L, D)
-        #image_features = self.adaptive_pooling(image_features)
-        return self.proj(image_features)
+        return self.proj(image_features)  # (B, N, L, n_embd)
     
     def compress_visual_tokens(self, image_features, reduction='pool'):
         # image_features: [B, NL, D]
@@ -821,7 +861,9 @@ class VELA(pl.LightningModule):
         if "images" not in samples:
             return self.rwkv.emb(samples["input_ids"]), samples["labels"]
         ### prepare image features
-        image_features  = self.encode_images(samples["images"])
+        spatial_shapes = samples.get("spatial_shapes", None)
+        padding_mask = samples.get("padding_mask", None)
+        image_features = self.encode_images(samples["images"], spatial_shapes=spatial_shapes, padding_mask=padding_mask)
         image_features = self.compress_visual_tokens(image_features)
         B_IMG, L_IMG, D_IMG = image_features.shape
         image_features = image_features.view(-1, D_IMG)

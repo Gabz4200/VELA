@@ -52,6 +52,8 @@ def build_args():
     a.my_pile_stage = 1
     a.pre_ffn = 0
     a.head_size = HEAD_SIZE
+    a.load_model = ""
+    a.n_attnres_blocks = 8
     return a
 
 
@@ -93,9 +95,49 @@ def embed(model, input_ids):
 
 # ── tests ────────────────────────────────────────────────────────────────
 
-def test_cpu_kernel_is_used():
-    """Verify the C++ CPU kernel is actually compiled and reachable."""
-    from src.model import HAS_CPP_EXT
+def test_vision_encoder():
+    """Verify that the VELA vision encoder (SigLino) successfully encodes an image."""
+    from src.model import VELA
+    from src.siglino.configs import siglino_configs
+
+    args = build_args()
+    # dense-30M: dim=384, n_storage_tokens=4, spatial_patch_size=16
+    args.vision_tower_path = "tiiuae/siglino-30M"
+    args.n_vtc_layer = 1
+    args.num_token_per_image = 64
+
+    model = VELA(args)
+    model.eval()
+
+    vit_cfg = siglino_configs["dense-30M"]
+    # Patchified input: (B=1, N=1, L=256, C*p^2=768)
+    # 256 patches from a 16x16 grid, each patch = 16*16*3 = 768 raw pixel values
+    B, N, L_patches = 1, 1, 256
+    patch_dim = vit_cfg.channel_size * vit_cfg.spatial_patch_size ** 2  # 3*16*16=768
+    images = torch.rand(B, N, L_patches, patch_dim, dtype=torch.float32)
+    spatial_shapes = torch.tensor([[16, 16]], dtype=torch.long)  # (B*N, 2)
+
+    with torch.no_grad():
+        features = model.encode_images(images, spatial_shapes=spatial_shapes)
+
+    # patch_features["siglino"] = h[:, R:] — CLS and registers are stripped
+    # so L_out == L_patches exactly
+    expected_L = L_patches
+    assert features is not None
+    assert features.shape[0] == B
+    assert features.shape[1] == N
+    assert features.shape[2] == expected_L, (
+        f"Expected L={expected_L} (patch tokens only, CLS/regs stripped), got {features.shape[2]}"
+    )
+    assert features.shape[3] == args.n_embd
+    assert not torch.isnan(features).any(), "NaN in vision encoder features"
+    assert not torch.isinf(features).any(), "Inf in vision encoder features"
+    print(f"  Vision features: {tuple(features.shape)} OK")
+
+
+def test_cpp_kernel():
+    """Verify the C++ CPU kernel is compiled and produces finite output."""
+    from src.model import HAS_CPP_EXT, WindBackstepping
 
     assert HAS_CPP_EXT, (
         "C++ extension not loaded — this CPU should support it. "
@@ -104,7 +146,6 @@ def test_cpu_kernel_is_used():
     assert hasattr(torch.ops, "wind_backstepping"), (
         "torch.ops.wind_backstepping not registered"
     )
-    # Quick smoke test: run the WindBackstepping operator standalone
     B, T, H, C = 2, 16, 4, 64
     torch.manual_seed(42)
     w = torch.randn(B, T, H, C, dtype=torch.bfloat16) * 0.3
@@ -114,10 +155,7 @@ def test_cpu_kernel_is_used():
     z = torch.randn(B, T, H, C, dtype=torch.bfloat16) * 0.05
     b = torch.randn(B, T, H, C, dtype=torch.bfloat16) * 0.05
 
-    from src.model import WindBackstepping
-
     y = WindBackstepping.apply(w, q, k, v, z, b)
-    # Should produce finite output without crashing
     assert y.shape == (B, T, H, C), f"Shape mismatch: {y.shape}"
     assert not torch.isnan(y).any(), "NaN in WindBackstepping forward"
     assert not torch.isinf(y).any(), "Inf in WindBackstepping forward"
@@ -201,6 +239,40 @@ def test_backward_stability(model):
     )
     assert nonzero > 0, "All gradients are zero — no gradient flow"
     print(f"  Params with non-zero gradient: {nonzero}")
+
+
+def test_cpu_quantization():
+    """Verify that CPU weight-only quantization can be applied via torchao."""
+    from src.siglino import load_siglino_from_hub
+    # Load dense-30M with CPU quantization enabled
+    model, _ = load_siglino_from_hub(
+        repo_id="tiiuae/siglino-30M",
+        device="cpu",
+        dtype=torch.float32,
+        quantize=True,
+    )
+    model.eval()
+
+    # Generate synthetic image inputs
+    B, N, L_patches = 1, 1, 64
+    patch_dim = 3 * 16 * 16
+    images = torch.rand(B, N, L_patches, patch_dim, dtype=torch.float32)
+    spatial_shapes = torch.tensor([[8, 8]], dtype=torch.long)
+
+    # Perform forward pass on the quantized model
+    with torch.no_grad():
+        out = model(
+            pixel_values=images.view(B * N, L_patches, patch_dim),
+            spatial_shapes=spatial_shapes,
+            compile=False,
+        )
+
+    # Verify outputs are finite
+    pf = out["patch_features"]["siglino"]
+    assert pf is not None
+    assert not torch.isnan(pf).any()
+    assert not torch.isinf(pf).any()
+    print("  CPU Quantization forward pass OK")
 
 
 if __name__ == "__main__":

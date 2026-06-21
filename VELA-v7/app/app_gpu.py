@@ -11,7 +11,7 @@ from io import BytesIO
 import torch
 import torch.nn.functional as F
 from datetime import datetime
-from transformers import CLIPImageProcessor
+from transformers import AutoImageProcessor
 from huggingface_hub import hf_hub_download
 from pynvml import *
 nvmlInit()
@@ -38,7 +38,7 @@ visual_encoder = VisionEncoder(config)
 vision_local_path = hf_hub_download(repo_id="howard-hou/vela-5", filename=vision_remote_path)
 vision_state_dict = torch.load(vision_local_path, map_location='cpu')
 visual_encoder.load_state_dict(vision_state_dict, strict=False)
-image_processor = CLIPImageProcessor.from_pretrained(vision_tower_dir)
+image_processor = AutoImageProcessor.from_pretrained(vision_tower_dir)
 visual_encoder = visual_encoder.to(device)
 ##########################################################################
 def generate_prompt(instruction):
@@ -64,6 +64,7 @@ def generate(
     out_last = 0
     out_str = ''
     occurrence = {}
+    out, state, token = None, None, None
     for i in range(int(token_count)):
         if i == 0:
             input_ids = pipeline.encode(ctx)[-ctx_limit:]
