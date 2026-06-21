@@ -1,5 +1,9 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "vela"
+name = "Vela7"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -66,9 +70,18 @@ filterwarnings = [
     "ignore:.*pynvml.*",
 ]
 
-[tool.setuptools.packages.find]
-where = ["VELA-v7"]
-include = ["src*", "tokenizer*", "app*", "eval*"]
+[tool.setuptools]
+package-dir = {"Vela7" = "VELA-v7"}
+py-modules = ["Vela7.train", "Vela7.evaluate", "Vela7.evaluate_hfds", "Vela7.export", "Vela7.calc_ctxlen"]
+packages = [
+    "Vela7",
+    "Vela7.src",
+    "Vela7.src.siglino",
+    "Vela7.src.siglino.kernels",
+    "Vela7.tokenizer",
+    "Vela7.app",
+    "Vela7.eval"
+]
 
 [tool.ruff]
 line-length = 100

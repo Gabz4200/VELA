@@ -30,8 +30,8 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from src.siglino import load_siglino_from_hub
-from src.siglino.utils import load_siglino_model  # local .pt loader
+from Vela7.src.siglino import load_siglino_from_hub
+from Vela7.src.siglino.utils import load_siglino_model  # local .pt loader
 
 
 def load_image(path: str) -> Image.Image:

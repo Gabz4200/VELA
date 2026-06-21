@@ -12,17 +12,17 @@ from pathlib import Path
 from tqdm import tqdm
 from collections import defaultdict
 from datasets import load_from_disk
-from tokenizer.rwkv_tokenizer import TRIE_TOKENIZER
-from src.dataset import DEFAULT_IMAGE_TOKEN, DEFAULT_STOP_TOKEN, STOP_TOKEN_INDEX
-from src.dataset import process_image_tokens_in_conversations, preprocess
-from src.utils import Conversation
+from Vela7.tokenizer.rwkv_tokenizer import TRIE_TOKENIZER
+from Vela7.src.dataset import DEFAULT_IMAGE_TOKEN, DEFAULT_STOP_TOKEN, STOP_TOKEN_INDEX
+from Vela7.src.dataset import process_image_tokens_in_conversations, preprocess
+from Vela7.src.utils import Conversation
 from transformers import AutoImageProcessor
 
 
     
 def get_input_image_tensor(image_list, image_processor):
     crop_size = image_processor.size
-    from src.utils import image_to_regions
+    from Vela7.src.utils import image_to_regions
     all_regions = []
     for image in image_list:
         image = image.convert("RGB")
@@ -62,7 +62,7 @@ def prepare_conversations(line):
 
 
 def eval_model(args):
-    from src.model import VELA
+    from Vela7.src.model import VELA
     model_path = Path(args.model_path)
     exp_name = model_path.parent.name
     model_name = model_path.stem

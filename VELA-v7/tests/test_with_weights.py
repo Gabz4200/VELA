@@ -77,7 +77,7 @@ def load_rwkv_weights(model, path):
 
 @pytest.fixture(scope="module")
 def model():
-    from src.model import RWKV
+    from Vela7.src.model import RWKV
 
     args = build_args()
     m = RWKV(args)
@@ -97,8 +97,8 @@ def embed(model, input_ids):
 
 def test_vision_encoder():
     """Verify that the VELA vision encoder (SigLino) successfully encodes an image."""
-    from src.model import VELA
-    from src.siglino.configs import siglino_configs
+    from Vela7.src.model import VELA
+    from Vela7.src.siglino.configs import siglino_configs
 
     args = build_args()
     # dense-30M: dim=384, n_storage_tokens=4, spatial_patch_size=16
@@ -137,7 +137,7 @@ def test_vision_encoder():
 
 def test_cpp_kernel():
     """Verify the C++ CPU kernel is compiled and produces finite output."""
-    from src.model import HAS_CPP_EXT, WindBackstepping
+    from Vela7.src.model import HAS_CPP_EXT, WindBackstepping
 
     assert HAS_CPP_EXT, (
         "C++ extension not loaded — this CPU should support it. "
@@ -243,7 +243,7 @@ def test_backward_stability(model):
 
 def test_cpu_quantization():
     """Verify that CPU weight-only quantization can be applied via torchao."""
-    from src.siglino import load_siglino_from_hub
+    from Vela7.src.siglino import load_siglino_from_hub
     # Load dense-30M with CPU quantization enabled
     model, _ = load_siglino_from_hub(
         repo_id="tiiuae/siglino-30M",

@@ -1,6 +1,6 @@
-from tokenizer.rwkv_tokenizer import TRIE_TOKENIZER
-from src.dataset import preprocess, IGNORE_INDEX, IMAGE_TOKEN_INDEX, load_data_file
-from src.dataset import process_image_tokens_in_conversations, process_tokens_in_conversations
+from Vela7.tokenizer.rwkv_tokenizer import TRIE_TOKENIZER
+from Vela7.src.dataset import preprocess, IGNORE_INDEX, IMAGE_TOKEN_INDEX, load_data_file
+from Vela7.src.dataset import process_image_tokens_in_conversations, process_tokens_in_conversations
 import argparse
 import json
 from tqdm import tqdm

@@ -11,10 +11,10 @@ import torch
 from pathlib import Path
 from tqdm import tqdm
 from collections import defaultdict
-from tokenizer.rwkv_tokenizer import TRIE_TOKENIZER
-from src.dataset import DEFAULT_IMAGE_TOKEN, DEFAULT_STOP_TOKEN, STOP_TOKEN_INDEX
-from src.dataset import process_image_tokens_in_conversations, preprocess
-from src.utils import Conversation
+from Vela7.tokenizer.rwkv_tokenizer import TRIE_TOKENIZER
+from Vela7.src.dataset import DEFAULT_IMAGE_TOKEN, DEFAULT_STOP_TOKEN, STOP_TOKEN_INDEX
+from Vela7.src.dataset import process_image_tokens_in_conversations, preprocess
+from Vela7.src.utils import Conversation
 from transformers import AutoImageProcessor
 
 
@@ -81,7 +81,7 @@ def get_single_image_tensor(line, image_folder, image_processor):
     if "image" in line:
         image = Image.open(image_folder / line["image"]).convert("RGB")
         crop_size = image_processor.size
-        from src.utils import image_to_regions
+        from Vela7.src.utils import image_to_regions
         regions = image_to_regions(image, (crop_size['width'], crop_size['height']))
         images = image_processor.preprocess(regions, return_tensors='pt')['pixel_values']
         return images.unsqueeze(0), len(regions)
@@ -107,7 +107,7 @@ def get_video_image_tensor(line, image_folder, image_processor):
         
         all_regions = []
         crop_size = image_processor.size
-        from src.utils import image_to_regions
+        from Vela7.src.utils import image_to_regions
         for frame in sampled_frames:
             image = Image.open(frame).convert("RGB")
             regions = image_to_regions(image, (crop_size['width'], crop_size['height']))
@@ -121,7 +121,7 @@ def get_video_image_tensor(line, image_folder, image_processor):
 
 
 def eval_model(args):
-    from src.model import VELA
+    from Vela7.src.model import VELA
     model_path = Path(args.model_path)
     model_name = model_path.parent.name
     if getattr(args, 'vision_tower_path', None) is None:

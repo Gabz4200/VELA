@@ -2741,9 +2741,9 @@ wheels = [
 ]
 
 [[package]]
-name = "vela"
+name = "vela7"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "datasets", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "deepspeed", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },

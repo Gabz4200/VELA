@@ -171,10 +171,10 @@ if __name__ == "__main__":
 
     ########################################################################################################
 
-    from src.trainer import train_callback
-    from src.dataset import MyDataset, multi_image_collate_fn
-    from tokenizer.rwkv_tokenizer import TRIE_TOKENIZER
-    from src.model import VELA
+    from Vela7.src.trainer import train_callback
+    from Vela7.src.dataset import MyDataset, multi_image_collate_fn
+    from Vela7.tokenizer.rwkv_tokenizer import TRIE_TOKENIZER
+    from Vela7.src.model import VELA
     from transformers import AutoImageProcessor
     
     # 256gb cpu memory is not enough for 8 gpus
