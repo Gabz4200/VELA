@@ -1,110 +1,81 @@
-# **VisualRWKV: A Visual Language Model Based on RWKV**
+# VELA: Visual Early-fusion Language-model for Action
+
 <p align="center">
-  <img src="./rwkv_emoji.png" alt="Logo" width="200">
+  <img src="./VELA-arch.png" alt="VELA Architecture" width="800">
 </p>
 
-**📖 [Paper](https://arxiv.org/abs/2406.13362) | 🤗 [Model](https://huggingface.co/howard-hou/visualrwkv-6) | 🐰 [Demo](https://huggingface.co/spaces/howard-hou/VisualRWKV-Gradio-1)**
+VELA extends the RWKV language model with early visual fusion and action output, enabling a single recurrent model to perceive, reason, and act across embodied tasks.
 
-VisualRWKV is a **visual language model** based on the RWKV language model, enabling RWKV to handle various visual tasks.
+> ⚠️ **DISCLAIMER 1:** This repository is a learning project made by a single Brazilian student that is exploring the design space of RWKV-based vision backbones. The architecture started as a port from VisualRWKV-7 to use Attention Residuals and slowly transition it to a Vision Language Action Model (VLA), but I am not restricted to that and I might explore multiple design paths.
 
-### Key Papers:
-- **[VisualRWKV: Exploring Recurrent Neural Networks for Visual Language Models](https://arxiv.org/abs/2406.13362)**
-- **[Eagle and Finch: RWKV with Matrix-Valued States and Dynamic Recurrence](https://arxiv.org/abs/2404.05892)**
+> ⚠️ **DISCLAIMER 2:** All the ideas behind what to do for this architecture are mine, but AI is still used in this project, mainly for those distinct tasks: commit message writing and automatic commit splitting, batch code writing for repetitive chores and helper routines. Parts of this README may be written by AI too as I usually ask it to compile information from the results of tests that I do.
 
-## 🚀 News and Updates
-- **2025.02.10** 🔥 **VisualRWKV-7.00 checkpoints released!** [[weights]](./MODEL_ZOO.md)
-- **2024.01.11** 🔥 **VisualRWKV-7.00 code released!** [[code]](https://github.com/howard-hou/VisualRWKV/tree/main/VisualRWKV-v7/v7.00)
-- **2024.06.25** 🔥 **VisualRWKV-6.0 checkpoints released!** [[weights]](./MODEL_ZOO.md)
-- **2024.05.11** 🔥 **VisualRWKV-6.0 code released!** [[code]](https://github.com/howard-hou/VisualRWKV/tree/main/VisualRWKV-v6/v6.0)
-- **2024.03.25** 🔥 **VisualRWKV-5.0 released!**
+## Description
 
----
+VELA is a visual language model built on [RWKV-7](https://github.com/BlinkDL/RWKV-LM), a recurrent neural network architecture with linear-complexity inference. Unlike conventional vision-language models that use cross-attention between a vision encoder and a language decoder, VELA fuses visual tokens directly into the RWKV embedding space before the recurrent stack processes the sequence. This early visual fusion lets the RWKV's recurrent state jointly encode vision and language context from step one.
 
-## 📊 VisualRWKV v7.0 Metrics
-The following table presents the performance comparison between VisualRWKV v7.0 and its predecessor VisualRWKV v6 across several benchmark datasets.
+The architecture combines a multi-scale vision backbone (SAM, DINOv2, SigLIP) with an RWKV-7 language model, and (in v7.10+) adds action output heads that extend the model from visual perception and reasoning to closed-loop control for embodied AI tasks.
 
-| Model Name         | VQAv2(test-dev) | ScienceQA(IMG) | TextVQA | GQA(acc) | Vision Encoder                              |
-|--------------------|--------------------|----------------|---------|----------|----------------------------------------------|
-| v0700+0b1          | 75.22              | 50.62          | 37.90   | 59.92    | SigLIP+dinov2+Sam |
-| v0700+0b4          | 77.85              | 54.98          | 41.05   | 62.30    | SigLIP+dinov2+Sam |
-| v0700+1b5          | 79.84              | 59.74          | 49.49   | 63.20    | SigLIP+dinov2+Sam |
-| VisualRWKV - v6 1.6B | 73.66 | 57.02 | 48.70 | 58.23 | SigLIP+dinov2+Sam | 
-| VisualRWKV - v6 3B | 71.52 | 65.34 | 48.68 | 59.56 | CLIP | 
-| VisualRWKV - v6 7B | 75.82 | 68.22 | 51.01 | 64.27 | CLIP |
+## Key Features
 
----
+- **Multi-Scale Vision Backbone**: Combines SAM (1024px), DINOv2 (448px), and SigLIP (448px) features for rich, multi-scale visual representations.
+- **Early Visual Fusion**: Visual tokens are injected at the embedding layer before the RWKV recurrence, enabling unified vision-language state from the first step.
+- **Linear-Time Inference**: Inherits RWKV's O(n) time complexity and O(1) memory — no quadratic attention bottleneck.
+- **Multi-Resolution Support**: Dynamic tile splitting processes images at multiple aspect ratios (1:1, 1:2, 2:1, 1:3, 3:1).
+- **Action Output (v7.10+)**: Extends the unified recurrent model from perception and reasoning to action prediction for embodied AI tasks.
+- **Distributed Training**: Built on PyTorch Lightning with DeepSpeed ZeRO for multi-GPU training across model scales.
+- **CUDA-Optimized WKV Kernel**: Custom WindBackstepping CUDA kernel for efficient RWKV-7 recurrence on GPU.
 
-## 🏗️ Architecture
-<p align="center">
-  <img src="./VisualRWKV-arch.png" alt="VisualRWKV Architecture" width="800">
-</p>
+## Project Structure
 
-## 🦄 Model Zoo
-VisualRWKV weights, checkpoints, and related results can be found in the [Model Zoo](./MODEL_ZOO.md).
-
----
-
-## 💻 Installation
-
-### 1. Clone the repository
-Clone the repo and navigate to the VisualRWKV folder. Version 7.00 is the stable release.
-```bash
-git clone https://github.com/howard-hou/VisualRWKV.git
-cd VisualRWKV-v7/v7.00
+```
+VELA/
+├── README.md                    # This file
+├── pyproject.toml               # Project configuration
+├── LICENSE                      # Apache 2.0
+├── VELA-arch.png                # Architecture diagram
+├── rwkv_emoji.png               # Logo
+├── VELA-v7/
+│   └── v7.04/                   # Consolidated v7 release
+│       ├── src/
+│       │   ├── model.py         # VELA and RWKV model definitions
+│       │   ├── dataset.py       # Multi-modal dataset and tokenization
+│       │   ├── trainer.py       # Training loop and LR schedule callbacks
+│       │   └── utils.py         # Utility functions
+│       ├── app/                 # Inference demo / serving app
+│       ├── eval/                # Benchmark evaluation tools
+│       ├── train.py             # Training entry point
+│       └── evaluate.py          # Local evaluation entry point
+├── cuda/                        # CUDA kernels (wkv7)
+│   ├── wkv7_cuda.cu
+│   └── wkv7_op.cpp
+└── download_huggingface.py      # HuggingFace model download
 ```
 
-### 2. Install dependencies
-Create a conda environment and install the necessary packages.
+## Installation
+
+Requires Python ≥ 3.11 and PyTorch.
+
 ```bash
-conda create -n visualrwkv python=3.10 -y
-conda activate visualrwkv
-pip install --upgrade pip  # Enable PEP 660 support
+# Clone repository
+git clone https://github.com/your-org/VELA.git
+cd VELA
 
-# Install dependencies:
-pip install torch==1.13.1+cu117 --extra-index-url https://download.pytorch.org/whl/cu117
-pip install pytorch-lightning==1.9.5 deepspeed==0.7.0 wandb ninja
+# Install with uv (recommended)
+uv sync
 
-# For best performance, use the following:
-pip install torch --upgrade --extra-index-url https://download.pytorch.org/whl/cu126
-pip install pytorch-lightning==1.9.5 deepspeed wandb ninja --upgrade
+# Or with pip
+pip install -e .
 ```
 
----
+## References
 
-## 📚 Pre-training and Fine-tuning
+- **RWKV-7 "Goose"**: Peng, B., Alcaide, E., et al. "RWKV-7 'Goose' with Expressive Dynamic State Evolution." _arXiv:2503.14456_ (2025).
+- **VELA: Exploring RNNs for Visual Language Models**: Hou, H., et al. _arXiv:2406.13362_ (2024).
+- **SAM**: Kirillov, A., et al. "Segment Anything." _ICCV 2023_.
+- **DINOv2**: Oquab, M., et al. "DINOv2: Learning Robust Visual Features without Supervision." _arXiv:2304.07193_ (2023).
+- **SigLIP**: Zhai, X., et al. "Sigmoid Loss for Language Image Pre-Training." _ICCV 2023_.
 
-**Latest stable version is VisualRWKV-v7/v7.00. Please navigate to the VisualRWKV-v7/v7.00 directory for running the code.**
+## License
 
-VisualRWKV training consists of two stages:
-
-1. **Pre-training**: Using a pretrain dataset to train a projection layer from a *frozen pretrained vision encoder* to the *frozen RWKV*.
-2. **Fine-tuning**: Using visual instruction data to teach the model to follow visual instructions.
-
----
-
-### 🔥 Pre-training
-
-#### Download LLaVA-Pretrain Dataset
-You can download the [LLaVA-Pretrain](https://huggingface.co/datasets/liuhaotian/LLaVA-Pretrain).
-
-#### Download RWKV Checkpoints for Pre-training
-If you want to pretrain the model yourself, download the following RWKV checkpoints.
-
-| **VisualRWKV Version** | **RWKV 0B1** | **RWKV 0B4** | **RWKV 1B5** | **RWKV 3B** | **RWKV 7B** |
-| --- | --- | --- | --- |--- | --- |
-| **VisualRWKV-v6** | - | - | [RWKV-x060-World-1B6](https://huggingface.co/BlinkDL/rwkv-6-world/blob/main/RWKV-x060-World-1B6-v2.1-20240328-ctx4096.pth) | [RWKV-x060-World-3B](https://huggingface.co/BlinkDL/rwkv-6-world/blob/main/RWKV-x060-World-3B-v2.1-20240417-ctx4096.pth) | [RWKV-x060-World-7B](https://huggingface.co/BlinkDL/rwkv-6-world/blob/main/RWKV-x060-World-7B-v2.1-20240507-ctx4096.pth) |
-| **VisualRWKV-v700** | [RWKV-x070-World-0B1](https://huggingface.co/BlinkDL/rwkv-7-world/blob/main/RWKV-x070-World-0.1B-v2.8-20241210-ctx4096.pth)  | [RWKV-x070-World-0B4](https://huggingface.co/BlinkDL/rwkv-7-world/blob/main/RWKV-x070-World-0.4B-v2.9-20250107-ctx4096.pth)  | [RWKV-x070-World-1B5](https://huggingface.co/BlinkDL/rwkv-7-world/blob/main/RWKV-x070-World-1.5B-v3-20250127-ctx4096.pth) | - | - |
-
-#### Pre-training Command
-To pretrain the VisualRWKV-v7.0 model (example for using 4 GPUs with a 1B5 RWKV model):
-please refer to [pretrain script](VisualRWKV-v7/v7.00/scripts/train/rwkv0b1_pretrain.sh)
-
----
-
-### 🔧 Visual Instruction Tuning
-
-#### Prepare Data
-Refer to the [LLaVA](https://github.com/haotian-liu/LLaVA/blob/main/README.md) project for visual instruction data.
-
-#### Fine-tuning Command
-To fine-tune the VisualRWKV-v7.0 model, please refer to [fine-tune script](VisualRWKV-v7/v7.00/scripts/train/rwkv0b1_mix665k.sh)
+Apache 2.0. See [LICENSE](LICENSE) for details.

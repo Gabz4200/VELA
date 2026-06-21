@@ -1,0 +1,74 @@
+[project]
+name = "vela"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "datasets",
+    "deepspeed",
+    "editdistance",
+    "gradio",
+    "huggingface-hub",
+    "lm-eval",
+    "numpy",
+    "openai",
+    "pandas",
+    "pillow",
+    "pycocoevalcap",
+    "pymupdf",
+    "pynvml",
+    "pytorch-lightning",
+    "rouge",
+    "rwkv",
+    "scikit-learn",
+    "timm",
+    "torch",
+    "torchvision",
+    "tqdm",
+    "transformers",
+    "unidecode",
+    "wandb",
+    "ggml-python",
+    "pytest"
+]
+
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/nightly/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "ggml"
+url = "https://abetlen.github.io/ggml-python/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch" }
+torchvision = { index = "pytorch" }
+ggml-python = { index = "ggml"}
+
+[tool.uv]
+environments = [
+    "sys_platform == 'linux'",
+    "sys_platform == 'darwin'",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore:.*torch.jit.script_method.*",
+    "ignore:.*pynvml.*",
+]
+
+[tool.setuptools.packages.find]
+include = ["vela*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
