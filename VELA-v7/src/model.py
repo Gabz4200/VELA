@@ -1,21 +1,25 @@
-########################################################################################################
-# The RWKV Language Model - https://github.com/BlinkDL/RWKV-LM
-########################################################################################################
-
 import functools
 import importlib
 import math
 import os
 import platform
-import subprocess
-from pathlib import Path
+from enum import Enum as _EnumType
 
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
+import torch.utils._pytree as _pytree
 from pytorch_lightning.strategies import DeepSpeedStrategy
 from pytorch_lightning.utilities import rank_zero_info, rank_zero_warn
 from torch.nn import functional as F
+
+# Patch pytree.register_constant to skip Enum subclasses (native in torch.compile since PyTorch 2.14+)
+# Prevents upstream torchao deprecation triggered by deepspeed import chain.
+_orig_reg = _pytree.register_constant
+_pytree.register_constant = lambda cls: (
+    cls if isinstance(cls, type) and issubclass(cls, _EnumType)
+    else _orig_reg(cls)
+)
 
 if importlib.util.find_spec("deepspeed"):
     import deepspeed
@@ -36,9 +40,6 @@ if os.environ.get("RWKV_JIT_ON", "0") == "1":
     MyModule = torch.jit.ScriptModule
     MyFunction = torch.jit.script_method
 
-########################################################################################################
-# CUDA Kernel
-########################################################################################################
 
 HEAD_SIZE = int(os.environ.get("RWKV_HEAD_SIZE_A", "64"))
 CHUNK_LEN = 16
@@ -198,58 +199,9 @@ def detect_gpu_backend() -> tuple[str, str]:
     if mps is not None and mps.is_available():
         macos_major = (platform.mac_ver()[0] or "").split(".")[0]
         if not macos_major:
-            # `platform.mac_ver()` empty on a Mac is exotic enough that
-            # silently bucketing every such host together is wrong. Fail.
             raise RuntimeError("Could not detect macOS major version via `platform.mac_ver()`.")
         return ("metal", f"macos{macos_major}")
     raise RuntimeError("no GPU backend available — install torch with cuda / rocm / mps support")
-
-
-@functools.cache
-def _cpu_brand() -> str:
-    """Full host-CPU brand string — distinguishes ISA generations.
-
-    The brand string identifies the CPU generation closely enough to
-    distinguish processor microarchitectures and available ISA extensions.
-
-    Sources, in order of preference:
-        Linux  — ``/proc/cpuinfo`` "model name" line (or "Hardware" /
-                 "Processor" on ARM, where some kernels omit model name).
-        macOS  — ``sysctl -n machdep.cpu.brand_string``.
-        Other  — ``platform.processor()``.
-
-    Raises ``RuntimeError`` if no source produces a non-empty brand.
-    """
-    sysname = platform.system()
-    if sysname == "Linux":
-        try:
-            text = Path("/proc/cpuinfo").read_text()
-        except OSError:
-            text = ""
-        for key in ("model name", "Hardware", "Processor"):
-            for line in text.splitlines():
-                if line.startswith(key) and ":" in line:
-                    brand = line.split(":", 1)[1].strip()
-                    if brand:
-                        return brand
-    elif sysname == "Darwin":
-        try:
-            r = subprocess.run(
-                ["sysctl", "-n", "machdep.cpu.brand_string"],
-                capture_output=True,
-                check=True,
-                text=True,
-            )
-            brand = r.stdout.strip()
-            if brand:
-                return brand
-        except Exception:
-            pass
-    fallback = platform.processor().strip()
-    if fallback:
-        return fallback
-    raise RuntimeError("Could not detect a host-CPU brand string.")
-
 
 HAS_CPP_EXT = False
 try:
@@ -287,8 +239,6 @@ try:
             extra_cuda_cflags=flags + ["-DUSE_CUDA"],
         )
     else:
-        # Sanity check/pre-requisite CPU brand detection
-        brand = _cpu_brand()
         load(
             name="wind_backstepping",
             sources=[os.path.join(model_dir, "..", "cuda", "wkv7_op.cpp")],
@@ -363,10 +313,6 @@ def Sinkhorn_Knopp(X, tmax=20, eps=1e-12):
     return M.to(dtype=orig_dtype)
 
 
-########################################################################################################
-# RWKV TimeMix
-########################################################################################################
-
 
 class RWKV_Tmix_x070(nn.Module):
     def __init__(self, args, layer_id):
@@ -413,7 +359,6 @@ class RWKV_Tmix_x070(nn.Module):
                         assert False
                     return x
 
-            # D_DECAY_LORA = 64
             D_DECAY_LORA = max(32, int(round((1.8 * (C**0.5)) / 32) * 32))  # suggestion
             self.w1 = nn.Parameter(torch.zeros(C, D_DECAY_LORA))
             self.w2 = nn.Parameter(ortho_init(torch.zeros(D_DECAY_LORA, C), 0.1))
@@ -424,20 +369,17 @@ class RWKV_Tmix_x070(nn.Module):
                 decay_speed.reshape(1, 1, C) + 0.5
             )  # !!! 0.5 comes from F.softplus !!!
 
-            # D_AAA_LORA = 64
             D_AAA_LORA = max(32, int(round((1.8 * (C**0.5)) / 32) * 32))  # suggestion
             self.a1 = nn.Parameter(torch.zeros(C, D_AAA_LORA))
             self.a2 = nn.Parameter(ortho_init(torch.zeros(D_AAA_LORA, C), 0.1))
             self.a0 = nn.Parameter(torch.zeros(1, 1, C))
 
-            # D_MV_LORA = 32
             D_MV_LORA = max(32, int(round((1.3 * (C**0.5)) / 32) * 32))  # suggestion
             if self.layer_id != 0:  # not needed for the first layer
                 self.v1 = nn.Parameter(torch.zeros(C, D_MV_LORA))
                 self.v2 = nn.Parameter(ortho_init(torch.zeros(D_MV_LORA, C), 0.1))
                 self.v0 = nn.Parameter(torch.zeros(1, 1, C) + 1.0)
 
-            # D_GATE_LORA = 128
             D_GATE_LORA = max(32, int(round((0.6 * (C**0.8)) / 32) * 32))  # suggestion
             # Note: for some data, you can reduce D_GATE_LORA or even remove this gate
             self.g1 = nn.Parameter(torch.zeros(C, D_GATE_LORA))
@@ -456,7 +398,6 @@ class RWKV_Tmix_x070(nn.Module):
                 H, C, eps=(1e-5) * (args.head_size_divisor**2)
             )  # !!! notice eps value !!!
 
-            # !!! initialize if you are using RWKV_Tmix_x070 in your code !!!
             self.receptance.weight.data.uniform_(-0.5 / (C**0.5), 0.5 / (C**0.5))
             self.key.weight.data.uniform_(-0.05 / (C**0.5), 0.05 / (C**0.5))
             self.value.weight.data.uniform_(-0.5 / (C**0.5), 0.5 / (C**0.5))
@@ -505,9 +446,6 @@ class RWKV_Tmix_x070(nn.Module):
         return x, v_first, pre_out
 
 
-########################################################################################################
-# RWKV ChannelMix
-########################################################################################################
 class RWKV_CMix_x070(nn.Module):
     def __init__(self, args, layer_id):
         super().__init__()
@@ -525,7 +463,6 @@ class RWKV_CMix_x070(nn.Module):
         self.key = nn.Linear(args.n_embd, args.n_embd * 4, bias=False)
         self.value = nn.Linear(args.n_embd * 4, args.n_embd, bias=False)
 
-        # !!! initialize if you are using RWKV_Tmix_x070 in your code !!!
         self.key.weight.data.uniform_(-0.5 / (args.n_embd**0.5), 0.5 / (args.n_embd**0.5))
         self.value.weight.data.zero_()
 
@@ -537,10 +474,6 @@ class RWKV_CMix_x070(nn.Module):
 
         return self.value(k)
 
-
-########################################################################################################
-# RWKV Block
-########################################################################################################
 
 
 def block_attn_res(V_blocks, partial_block, proj, norm):
@@ -649,8 +582,6 @@ class MHCBlock(Block):
             V_blocks = torch.cat([V_blocks, partial_block.unsqueeze(0)], dim=0)
             partial_block = None
 
-        Z = h.unsqueeze(0).repeat(4, 1, 1, 1)
-
         B, T = h.shape[0], h.shape[1]
         x_norm = rmsnorm(h)
         tilde_H_pre_att = self.alpha_pre_att * (x_norm @ self.phi_pre_att) + self.b_pre_att
@@ -661,12 +592,11 @@ class MHCBlock(Block):
         H_post_att = 2 * torch.sigmoid(tilde_H_post_att)
         H_res_att = Sinkhorn_Knopp(tilde_H_res_att)
 
-        s_att = (H_pre_att.permute(2, 0, 1).unsqueeze(-1) * Z).sum(dim=0)
+        s_att = torch.einsum("b t e, b t c -> b t c", H_pre_att, h)
         xx, v_first, pre_out = self.att(self.ln1(s_att), v_first)
 
-        H_post_att_reshaped = H_post_att.permute(2, 0, 1).unsqueeze(-1)
-        Z_att = H_post_att_reshaped * xx.unsqueeze(0) + torch.einsum(
-            "b t i j, j b t c -> i b t c", H_res_att, Z
+        Z_att = H_post_att.permute(2, 0, 1).unsqueeze(-1) * xx + torch.einsum(
+            "b t i j, b t c -> i b t c", H_res_att, h
         )
 
         pre_out_norm = rmsnorm(pre_out)
@@ -680,16 +610,13 @@ class MHCBlock(Block):
         H_post_ffn = 2 * torch.sigmoid(tilde_H_post_ffn)
         H_res_ffn = Sinkhorn_Knopp(tilde_H_res_ffn)
 
-        s_ffn = (H_pre_ffn.permute(2, 0, 1).unsqueeze(-1) * Z_att).sum(dim=0)
+        s_ffn = torch.einsum("b t e, e b t c -> b t c", H_pre_ffn, Z_att)
         h_ffn = block_attn_res(V_blocks, s_ffn, self.mlp_res_proj, self.mlp_res_norm)
 
-        t_ffns = []
-        H_pre_ffn_perm = H_pre_ffn.permute(2, 0, 1).unsqueeze(-1)
-        for e in range(4):
-            s_ffn_e = H_pre_ffn_perm[e] * h_ffn
-            t_ffn_e = self.experts[e](self.ln2(s_ffn_e))
-            t_ffns.append(t_ffn_e)
-        t_ffn = torch.stack([t_ffn_e for t_ffn_e in t_ffns], dim=0)
+        t_ffn = torch.stack(
+            [self.experts[e](self.ln2(H_pre_ffn[..., e].unsqueeze(-1) * h_ffn)) for e in range(4)],
+            dim=0,
+        )
 
         H_post_ffn_reshaped = H_post_ffn.permute(2, 0, 1).unsqueeze(-1)
         Z_out = H_post_ffn_reshaped * t_ffn + torch.einsum(
@@ -734,7 +661,6 @@ class RWKV(pl.LightningModule):
     def pad_left(self, x, num_tokens_to_pad):
         # pad left with eos token embedding
         if num_tokens_to_pad != 0:
-            # left padding by add eos token at the beginning
             eos_idx = torch.full(
                 (x.size(0), num_tokens_to_pad),
                 STOP_TOKEN_INDEX,
@@ -878,7 +804,6 @@ class VELA(pl.LightningModule):
 
         self.proj = MLPWithContextGating(hidden_size, args.n_embd)
         self.vtc = VisualTokenCompressor(args)
-        # self.init_vtc_weight()  # call after loading vela
 
     def init_vtc_weights(self):
         # Copy weights from rwkv to vtc
@@ -909,14 +834,8 @@ class VELA(pl.LightningModule):
         # freeze all layers including embedding and lm head
         if num_layers_to_freeze == self.args.n_layer:
             self.rwkv.requires_grad_(False)
-        # otherwise, freeze only the first num_layers_to_freeze layers
         for i, block in enumerate(self.rwkv.blocks):
-            if i < num_layers_to_freeze:
-                for p in block.parameters():
-                    p.requires_grad_(False)
-            else:
-                for p in block.parameters():
-                    p.requires_grad_(True)
+            block.requires_grad_(i >= num_layers_to_freeze)
 
     def freeze_emb(self):
         self.rwkv.emb.requires_grad_(False)
@@ -1006,13 +925,6 @@ class VELA(pl.LightningModule):
             if self.trainer.is_global_zero:
                 self.trainer.my_loss_all = all
 
-    def adaptive_pooling(self, image_features):
-        B, L, D = image_features.shape
-        H_or_W = int(L**0.5)
-        image_features = image_features.view(B, H_or_W, H_or_W, D).permute(0, 3, 1, 2)
-        image_features = self.pool(image_features).view(B, D, -1).permute(0, 2, 1)
-        return image_features
-
     def encode_images(self, images, spatial_shapes=None, padding_mask=None):
         if images.dim() == 5:
             # Traditional format: [B, N, C, H, W] — pixel images, patchify first
@@ -1063,7 +975,6 @@ class VELA(pl.LightningModule):
     def preparing_embedding(self, samples):
         if "images" not in samples:
             return self.rwkv.emb(samples["input_ids"]), samples["labels"]
-        ### prepare image features
         spatial_shapes = samples.get("spatial_shapes", None)
         padding_mask = samples.get("padding_mask", None)
         image_features = self.encode_images(
@@ -1073,7 +984,6 @@ class VELA(pl.LightningModule):
         image_features = self.compress_visual_tokens(image_features)
         B_IMG, L_IMG, D_IMG = image_features.shape
         image_features = image_features.view(-1, D_IMG)
-        ### prepare input token
         input_embeds = self.rwkv.emb(samples["input_ids"])
         B, L, D = input_embeds.shape
         input_embeds = input_embeds.view(B * L, D)
@@ -1083,7 +993,7 @@ class VELA(pl.LightningModule):
         if selected_sum != B_IMG * L_IMG:
             # truncate the image_features, wrong way to handle this, but it is fine for now
             image_features = image_features[:selected_sum]
-            sample_id = ":::".join(samples["sample_id"])
+            sample_id = ":::".join(samples.get("sample_id", []))
             rank_zero_warn(
                 f"\nsample_id: {sample_id}, image tokens: {selected_sum}, but image features: {B_IMG * L_IMG}\n"
             )
@@ -1093,24 +1003,24 @@ class VELA(pl.LightningModule):
 
     def generate(
         self, input_ids, images, do_sample, temperature, top_p, max_new_tokens, stop_token_idx
-    ) -> list[int]:
-        """one mode to generate, only generate one sample at a time
-        # input_ids: [1, seq_len]
-        # images: a dict of dino, siglip and sam features, each with shape [1, 3, H_dino, W_dino], [1, 3, H_siglip, W_siglip], [1, 3, H_sam, W_sam]
-        # do_sample: bool
-        # temperature: float
-        # top_p: float
-        # max_new_tokens: int
+    ) -> tuple[list[int], list[float], list[float]]:
+        """Generate tokens one at a time (greedy only); single sample.
+
+        Args:
+            input_ids: [1, seq_len]
+            images: dict of vision features, each [1, 3, H, W]
+            do_sample: bool
+            temperature: float
+            top_p: float
+            max_new_tokens: int
         """
-        # prepare samples
         samples = {
             "input_ids": input_ids,
-            "images": images,
             "labels": torch.full_like(input_ids, IGNORE_INDEX),
         }
-        # prepare embedding, x: [1, seq_len, n_embd]
+        if images is not None:
+            samples["images"] = images
         x, _ = self.preparing_embedding(samples)
-        # generate
         generated_tokens = []
         generated_token_logits = []
         generated_token_probs = []

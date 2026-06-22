@@ -23,6 +23,7 @@ os.environ["RWKV_CTXLEN"] = "128"
 # Upstream deprecations we can't fix (deepspeed → torch.utils.mkldnn, pynvml)
 warnings.filterwarnings("ignore", message=".*torch.jit.script_method.*")
 warnings.filterwarnings("ignore", message=".*pynvml.*")
+warnings.filterwarnings("ignore", message=".*Enum subclass and is now natively supported by torch.compile.*")
 
 WEIGHTS_PATH = os.path.join(
     os.path.dirname(__file__), "..", "dummy_data/VisualRWKV-v0700-0B1-v1.0-20250109.pth"
@@ -34,7 +35,6 @@ N_EMBD = 768
 VOCAB_SIZE = 65536
 HEAD_SIZE = 64
 CTX_LEN = 128
-
 
 
 def build_args():
@@ -66,7 +66,6 @@ def load_rwkv_weights(model, path):
 
     rwkv_sd = convert_rwkv7_to_vela7_moe(rwkv_sd)
     missing, unexpected = model.load_state_dict(rwkv_sd, strict=False)
-    # Allow only blocks.0.att.v* (block 0 has no value-residual LoRA), our new res_proj/res_norm parameters, and new mHC parameters
     unexpected = [
         k
         for k in missing
@@ -82,7 +81,6 @@ def load_rwkv_weights(model, path):
         )
     ]
     assert not unexpected, f"Unexpected missing keys: {unexpected}"
-    # Convert to bfloat16 to match checkpoint dtype and satisfy kernel assertion
     model.bfloat16()
     n_loaded = len(rwkv_sd)
     print(f"  Loaded {n_loaded} weights ({len(unexpected)} skipped: vit.*, proj.*)")
@@ -117,7 +115,6 @@ def test_vision_encoder():
     from Vela7.src.siglino.configs import siglino_configs
 
     args = build_args()
-    # dense-30M: dim=384, n_storage_tokens=4, spatial_patch_size=16
     args.vision_tower_path = "tiiuae/siglino-30M"
     args.n_vtc_layer = 1
     args.num_token_per_image = 64
@@ -126,18 +123,14 @@ def test_vision_encoder():
     model.eval()
 
     vit_cfg = siglino_configs["dense-30M"]
-    # Patchified input: (B=1, N=1, L=256, C*p^2=768)
-    # 256 patches from a 16x16 grid, each patch = 16*16*3 = 768 raw pixel values
     B, N, L_patches = 1, 1, 256
-    patch_dim = vit_cfg.channel_size * vit_cfg.spatial_patch_size**2  # 3*16*16=768
+    patch_dim = vit_cfg.channel_size * vit_cfg.spatial_patch_size**2
     images = torch.rand(B, N, L_patches, patch_dim, dtype=torch.float32)
     spatial_shapes = torch.tensor([[16, 16]], dtype=torch.long)  # (B*N, 2)
 
     with torch.no_grad():
         features = model.encode_images(images, spatial_shapes=spatial_shapes)
 
-    # patch_features["siglino"] = h[:, R:] — CLS and registers are stripped
-    # so L_out == L_patches exactly
     expected_L = L_patches
     assert features is not None
     assert features.shape[0] == B
@@ -257,7 +250,6 @@ def test_cpu_quantization():
     """Verify that CPU weight-only quantization can be applied via torchao."""
     from Vela7.src.siglino import load_siglino_from_hub
 
-    # Load dense-30M with CPU quantization enabled
     model, _ = load_siglino_from_hub(
         repo_id="tiiuae/siglino-30M",
         device="cpu",
@@ -266,13 +258,11 @@ def test_cpu_quantization():
     )
     model.eval()
 
-    # Generate synthetic image inputs
     B, N, L_patches = 1, 1, 64
     patch_dim = 3 * 16 * 16
     images = torch.rand(B, N, L_patches, patch_dim, dtype=torch.float32)
     spatial_shapes = torch.tensor([[8, 8]], dtype=torch.long)
 
-    # Perform forward pass on the quantized model
     with torch.no_grad():
         out = model(
             pixel_values=images.view(B * N, L_patches, patch_dim),
@@ -280,12 +270,92 @@ def test_cpu_quantization():
             compile=False,
         )
 
-    # Verify outputs are finite
     pf = out["patch_features"]["siglino"]
     assert pf is not None
     assert not torch.isnan(pf).any()
     assert not torch.isinf(pf).any()
     print("  CPU Quantization forward pass OK")
+
+
+def test_generate_greedy():
+    """Verify greedy generation produces tokens and returns expected tuple types."""
+    from Vela7.src.model import VELA
+
+    args = Namespace()
+    args.n_layer = 2
+    args.n_embd = 256
+    args.vocab_size = 65536
+    args.dim_att = 256
+    args.dim_ffn = 1024
+    args.head_size_a = 64
+    args.head_size_divisor = 8
+    args.dropout = 0.0
+    args.grad_cp = 0
+    args.ctx_len = 64
+    args.my_pos_emb = 0
+    args.my_pile_stage = 1
+    args.pre_ffn = 0
+    args.head_size = 64
+    args.load_model = ""
+    args.n_attnres_blocks = 1
+    args.vision_tower_path = "tiiuae/siglino-30M"
+    args.n_vtc_layer = 1
+    args.num_token_per_image = 4
+
+    model = VELA(args).bfloat16()
+    model.eval()
+
+    input_ids = torch.tensor([[1, 2, 3]], dtype=torch.long)
+
+    # Test generate returns tuple types
+    gen_ids, gen_logits, gen_probs = model.generate(
+        input_ids=input_ids,
+        images=None,
+        do_sample=False,
+        temperature=0.0,
+        top_p=0.0,
+        max_new_tokens=5,
+        stop_token_idx=0,
+    )
+    assert isinstance(gen_ids, list)
+    assert isinstance(gen_logits, list)
+    assert isinstance(gen_probs, list)
+    assert len(gen_ids) <= 5
+    assert all(isinstance(t, int) for t in gen_ids)
+    print(f"  Generate greedy: {len(gen_ids)} tokens OK")
+
+
+def test_kernel_parity():
+    """Verify C++ kernel output matches PyTorch reference implementation."""
+    from Vela7.src.model import WindBackstepping, wind_backstepping_ref_forward, wind_backstepping_ref_backward, HAS_CPP_EXT
+
+    assert HAS_CPP_EXT, "C++ extension required for parity test"
+    B, T, H, C = 2, 16, 4, 64
+    torch.manual_seed(123)
+    w = (torch.randn(B, T, H, C, dtype=torch.bfloat16) * 0.3).detach().requires_grad_(True)
+    q = (torch.randn(B, T, H, C, dtype=torch.bfloat16) * 0.05).detach().requires_grad_(True)
+    k = (torch.randn(B, T, H, C, dtype=torch.bfloat16) * 0.05).detach().requires_grad_(True)
+    v = (torch.randn(B, T, H, C, dtype=torch.bfloat16) * 0.05).detach().requires_grad_(True)
+    z = (torch.randn(B, T, H, C, dtype=torch.bfloat16) * 0.05).detach().requires_grad_(True)
+    bb = (torch.randn(B, T, H, C, dtype=torch.bfloat16) * 0.05).detach().requires_grad_(True)
+
+    # Forward parity
+    w_ref, q_ref, k_ref, v_ref, z_ref, b_ref = [t.clone().detach().requires_grad_(True) for t in [w, q, k, v, z, bb]]
+    y_cpp = WindBackstepping.apply(w, q, k, v, z, bb)
+    y_ref, s_ref, sa_ref = wind_backstepping_ref_forward(w_ref, q_ref, k_ref, v_ref, z_ref, b_ref)
+    torch.testing.assert_close(y_cpp, y_ref, rtol=1e-2, atol=1e-2, msg="Forward mismatch")
+
+    # Backward parity
+    y_cpp.sum().backward()
+    grads_cpp = [w.grad.clone(), q.grad.clone(), k.grad.clone(), v.grad.clone(), z.grad.clone(), bb.grad.clone()]
+
+    dy = torch.ones_like(y_ref)
+    grads_ref = wind_backstepping_ref_backward(w_ref, q_ref, k_ref, v_ref, z_ref, b_ref, dy, s_ref, sa_ref)
+
+    for gc, gr, name in zip(grads_cpp, grads_ref, "wqkvzb"):
+        torch.testing.assert_close(gc, gr, rtol=1.5e-1, atol=1.5e-1, msg=f"Backward mismatch: {name}")
+
+    print("  Kernel parity: forward/backward match PyTorch reference OK")
 
 
 if __name__ == "__main__":

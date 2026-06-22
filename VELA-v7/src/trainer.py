@@ -14,6 +14,15 @@ def my_save(args, trainer, dd, ff):
         torch.save(dd, ff)
 
 
+def _should_save_epoch(args, trainer):
+    # not save first epoch, only if epoch count == 1, save it
+    if trainer.current_epoch % args.epoch_save == 0:
+        if trainer.current_epoch == 0:
+            return args.epoch_count == 1
+        return True
+    return False
+
+
 class train_callback(pl.Callback):
     def __init__(self, args):
         super().__init__()
@@ -59,7 +68,6 @@ class train_callback(pl.Callback):
 
         trainer.my_lr = lr
         trainer.my_wd = wd_now
-        # rank_zero_info(f"{real_step} {lr}")
 
         if trainer.global_step == 0 and self.micro_step == 0:
             if trainer.is_global_zero:  # logging
@@ -110,7 +118,6 @@ class train_callback(pl.Callback):
             trainer.my_epoch_loss = trainer.my_loss_sum / trainer.my_loss_count
             self.log("lr", trainer.my_lr, prog_bar=True, on_step=True)
             self.log("loss", trainer.my_epoch_loss, prog_bar=True, on_step=True)
-            # self.log("s", real_step, prog_bar=True, on_step=True)
 
             if len(args.wandb) > 0:
                 lll = {
@@ -133,26 +140,12 @@ class train_callback(pl.Callback):
         dataset.global_rank = trainer.global_rank
         dataset.real_epoch = int(args.epoch_begin + trainer.current_epoch)
         dataset.world_size = trainer.world_size
-        # print(f'########## world_size {dataset.world_size} global_rank {dataset.global_rank} real_epoch {dataset.real_epoch} ##########')
 
     def on_train_epoch_end(self, trainer, pl_module):
-        def get_epoch_save_condition(args, trainer):
-            # not save first epoch, only if epoch count == 1, save it
-            if trainer.current_epoch % args.epoch_save == 0:
-                if trainer.current_epoch == 0:
-                    if args.epoch_count == 1:
-                        return True
-                    else:
-                        return False
-                else:
-                    return True
-            else:
-                return False
-
         args = self.args
         to_save_dict = {}
         if (trainer.is_global_zero) or ("deepspeed_stage_3" in args.strategy):  # save pth
-            if (args.epoch_save > 0 and get_epoch_save_condition(args, trainer)) or (
+            if (args.epoch_save > 0 and _should_save_epoch(args, trainer)) or (
                 trainer.current_epoch == args.epoch_count - 1
             ):
                 to_save_dict = pl_module.state_dict()

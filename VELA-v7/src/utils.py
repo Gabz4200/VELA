@@ -1,23 +1,10 @@
 import base64
 import dataclasses
 import math
-import time
 from collections import defaultdict
 from io import BytesIO
-from typing import Dict, List
 
 from PIL import Image
-
-time_slot = {}
-time_ref = time.time_ns()
-
-
-def record_time(name):
-    if name not in time_slot:
-        time_slot[name] = 1e20
-    tt = (time.time_ns() - time_ref) / 1e9
-    if tt < time_slot[name]:
-        time_slot[name] = tt
 
 
 def load_image_from_base64(image):
@@ -133,8 +120,8 @@ class Conversation:
     """A class that keeps all conversation history."""
 
     id: str
-    roles: List[str]
-    conversations: List[Dict[str, str]]
+    roles: list[str]
+    conversations: list[dict[str, str]]
 
     def append_message(self, role, message):
         d = {"from": role, "value": message}
@@ -153,14 +140,13 @@ def compress_parameter_names(parameter_names):
                 split_index = i
                 break
         if split_index is not None:
-            block = parts[split_index]  # 提取block号
-            rest = ".".join(parts[split_index + 1 :])  # 剩余部分
-            prefix = ".".join(parts[:split_index])  #
+            block = parts[split_index]
+            rest = ".".join(parts[split_index + 1 :])
+            prefix = ".".join(parts[:split_index])
             compressed[(prefix, rest)].add(block)
         else:
             compressed[(weight, "")].add("")
 
-    # 格式化输出，合并具有相同rest部分的block号
     output = []
     for (prefix, rest), blocks in compressed.items():
         if rest and blocks:

@@ -20,6 +20,7 @@ try:
 except ImportError:
     _FLEX_AVAILABLE = False
     BlockMask = None  # type: ignore[assignment,misc]
+    create_block_mask = None  # type: ignore[assignment]
     cuda_flex_attn = None  # type: ignore[assignment]
 
 
@@ -28,42 +29,6 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
     if n_rep == 1:
         return x
     return torch.repeat_interleave(x, repeats=n_rep, dim=2)
-
-
-class FlexAttentionWrapper(nn.Module):
-    """Thin wrapper kept for API compatibility. Delegates to kernels/*.py.
-
-    Only used on CUDA. CPU always goes through the cpu_sdpa kernel.
-    """
-
-    def forward(
-        self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        block_mask=None,
-        compile: bool = True,
-        return_aux: bool = False,
-    ):
-        assert _FLEX_AVAILABLE and cuda_flex_attn is not None, (
-            "flex_attention is not available on this platform"
-        )
-        return cuda_flex_attn(
-            q, k, v, block_mask=block_mask, compile=compile, return_lse=return_aux
-        )
-
-
-class SDPAttentionWrapper(nn.Module):
-    """Fallback SDPA attention when flex_attention is not available."""
-
-    def forward(
-        self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        attn_mask: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        return F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
 
 
 class Attention(nn.Module):
@@ -101,7 +66,6 @@ class Attention(nn.Module):
         if self.sink_attn:
             self.sinks = nn.Parameter(torch.empty(n_heads))
 
-        self.inner_attention = FlexAttentionWrapper()
 
     def init_weights(self, init_std: float):
         for linear in (self.wq, self.wk, self.wv):
@@ -139,27 +103,27 @@ class Attention(nn.Module):
         xk = xk.transpose(1, 2)
         xv = xv.transpose(1, 2)
 
-        if self.use_flex_attn and _FLEX_AVAILABLE and xq.is_cuda:
+        if self.use_flex_attn and _FLEX_AVAILABLE and cuda_flex_attn is not None and xq.is_cuda:
             if self.sink_attn:
-                output, aux = self.inner_attention(
+                output, aux = cuda_flex_attn(
                     xq,
                     xk,
                     xv,
                     block_mask=attention_masks,
                     compile=compile,
-                    return_aux=True,
+                    return_lse=True,
                 )
                 sinks_BHL = E.rearrange(self.sinks, "h -> 1 h 1")
                 sink_scale = torch.sigmoid(aux.lse - sinks_BHL)
                 output = (output * sink_scale.unsqueeze(-1)).to(output.dtype)
             else:
-                output = self.inner_attention(
+                output = cuda_flex_attn(
                     xq,
                     xk,
                     xv,
                     block_mask=attention_masks,
                     compile=compile,
-                    return_aux=False,
+                    return_lse=False,
                 )
         else:
             # CPU path: compiled SDPA kernel (oneDNN/MKL-DNN, no flex)
@@ -181,7 +145,7 @@ def create_attention_mask(
     BLOCK_SIZE: tuple[int, int] = (64, 64),
 ):
     """Create a BlockMask for flex_attention. Returns None if flex is unavailable."""
-    if not _FLEX_AVAILABLE:
+    if not _FLEX_AVAILABLE or create_block_mask is None:
         return None
     return create_block_mask(
         mask_mod,

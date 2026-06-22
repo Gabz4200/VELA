@@ -8,7 +8,6 @@ from transformers import PreTrainedModel
 
 from .attention import Attention, create_attention_mask
 
-# Relative imports from your local files
 from .configuration_siglino import SigLinoConfig
 from .moe import FeedForward, MoE
 from .rope import (
@@ -48,22 +47,14 @@ class Siglip2MultiheadAttentionPoolingHead(nn.Module):
         probe = self.probe.repeat(batch_size, 1, 1)
 
         if attention_mask is not None:
-            # Mask expansion logic kept from your original model.py
-            # Note: This uses einops and specific expansion for MHA
-            def _expand_mask(mask: torch.Tensor, dtype: torch.dtype, tgt_len: int | None = None):
-                bsz, src_len = mask.size()
-                tgt_len = tgt_len if tgt_len is not None else src_len
-                expanded_mask = mask[:, None, None, :].expand(bsz, 1, tgt_len, src_len).to(dtype)
-                inverted_mask = torch.tensor(1.0, dtype=dtype, device=mask.device) - expanded_mask
-                return inverted_mask.masked_fill(
-                    inverted_mask.to(torch.bool), torch.finfo(dtype).min
-                )
-
-            attention_mask = E.rearrange(attention_mask, "(b s) -> b s", b=batch_size)
+            mask_2d = E.rearrange(attention_mask, "(b s) -> b s", b=batch_size)
             target_len, source_len = probe.shape[1], hidden_state.shape[1]
-            attention_mask = _expand_mask(attention_mask, hidden_state.dtype, target_len)
-            attention_mask = attention_mask.repeat(1, self.num_heads, target_len, 1)
-            attention_mask = attention_mask.reshape(-1, target_len, source_len)
+            bsz, src_len = mask_2d.size()
+            expanded = mask_2d[:, None, None, :].expand(bsz, 1, target_len, src_len).to(hidden_state.dtype)
+            inverted = 1.0 - expanded
+            attn_bias = inverted.masked_fill(inverted.to(torch.bool), torch.finfo(hidden_state.dtype).min)
+            attn_bias = attn_bias.repeat(1, self.num_heads, target_len, 1)
+            attention_mask = attn_bias.reshape(-1, target_len, source_len)
 
         hidden_state = self.attention(probe, hidden_state, hidden_state, attn_mask=attention_mask)[
             0

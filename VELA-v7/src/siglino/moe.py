@@ -1,6 +1,3 @@
-# MoE (Mixture of Experts) implementation for Falcon Vision
-# Simplified from torchtitan's MoE for standalone use
-
 from dataclasses import dataclass
 from typing import Literal
 
@@ -65,7 +62,7 @@ def _run_experts_for_loop(
 
     out = torch.cat(out_splits, dim=0)
     if num_padding > 0:
-        out = torch.vstack((out, out.new_zeros((num_padding, out.shape[-1]))))
+        out = F.pad(out, (0, 0, 0, num_padding))
     return out
 
 
@@ -191,7 +188,7 @@ class MoE(nn.Module):
         routed_input = torch.gather(x, dim=0, index=token_indices_expanded)
 
         if self.score_before_experts:
-            routed_input = (routed_input.float() * top_scores_sorted.view(-1, 1)).to(x.dtype)
+            routed_input = (routed_input.float() * top_scores_sorted.unsqueeze(-1)).to(x.dtype)
 
         routed_output = self.experts(routed_input, num_tokens_per_expert)
 
@@ -200,14 +197,14 @@ class MoE(nn.Module):
         else:
             out = torch.zeros_like(x)
 
-        routed_output = (routed_output.to(torch.float32) * top_scores_sorted.view(-1, 1)).to(
+        routed_output = (routed_output.to(torch.float32) * top_scores_sorted.unsqueeze(-1)).to(
             x.dtype
         )
 
         out = out.scatter_add(dim=0, index=token_indices_expanded, src=routed_output)
         return out.view(bs, slen, dim)
 
-    def init_weights(self, init_std: float, buffer_device: torch.device = None):
+    def init_weights(self, init_std: float):
         self.experts.init_weights(init_std)
         self.router.init_weights(init_std)
         if self.shared_experts is not None:

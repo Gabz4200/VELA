@@ -30,14 +30,9 @@ def multi_image_collate_fn(batch):
     input_ids = torch.stack([x["input_ids"] for x in batch])
     labels = torch.stack([x["labels"] for x in batch])
     sample_id = [str(x["sample_id"]) for x in batch]
-    # concatenate images
-    # old way: (BN, C, H, W)
-    # images = torch.cat([x['images'] for x in batch if 'images' in x], dim=0)
-    # new way: (B, N, C, H, W)
+    # concatenate images: (B, N, C, H, W)
     images = [x["images"].unsqueeze(0) for x in batch if "images" in x]
     images = torch.cat(images, dim=0)
-    # the num of images of each sample
-    # num_image_per_sample = [len(x['images']) for x in batch if 'images' in x]
     return dict(
         input_text=input_text,
         input_ids=input_ids,
@@ -57,16 +52,14 @@ def process_image_tokens_in_conversations(
     make sure the number of image tokens is euqal to the number of image paths
     """
     num_global_images = sum(
-        [sentence["value"].count(DEFAULT_IMAGE_TOKEN) for sentence in conversations]
+        sentence["value"].count(DEFAULT_IMAGE_TOKEN) for sentence in conversations
     )
     assert num_global_images == 1, (
         f"only support one image in a conversation, but got {num_global_images}"
     )
     for sentence in conversations:
         if DEFAULT_IMAGE_TOKEN in sentence["value"]:
-            region_tokens = (
-                "<img_start>" + "".join([DEFAULT_IMAGE_TOKEN] * num_regions) + "<img_end>"
-            )
+            region_tokens = "<img_start>" + DEFAULT_IMAGE_TOKEN * num_regions + "<img_end>"
             sentence["value"] = sentence["value"].replace(DEFAULT_IMAGE_TOKEN, region_tokens)
             sentence["value"] = re.sub(r"\n(\s*\n)+", "\n", sentence["value"])
             sentence["value"] = sentence["value"].strip()
@@ -105,7 +98,6 @@ def _add_speaker_and_signal(conversations):
                 f"Unknown speaker: {sentence['from']}, must be human, user, gpt, assistant, or system."
             )
 
-        # Extract metadata
         metadata = sentence.get("name") or sentence.get("metadata")
         if not metadata:
             if role == "user":
@@ -115,7 +107,6 @@ def _add_speaker_and_signal(conversations):
             else:  # assistant
                 metadata = ""
 
-        # Construct header
         if metadata:
             header = f"<im_start>{role}:{metadata}\n"
         else:
@@ -164,9 +155,15 @@ def pad_to_max_len(input_ids, targets, max_len, pad_token_id):
     padding_len = max_len - len(input_ids)
     if padding_len <= 0:
         return input_ids, targets
-    # input_ids and targets are tensors
-    input_ids = torch.cat([input_ids, torch.tensor([pad_token_id] * padding_len, dtype=torch.long)])
-    targets = torch.cat([targets, torch.tensor([IGNORE_INDEX] * padding_len, dtype=torch.long)])
+    input_ids = torch.cat(
+        [
+            input_ids,
+            torch.full((padding_len,), pad_token_id, dtype=torch.long, device=input_ids.device),
+        ]
+    )
+    targets = torch.cat(
+        [targets, torch.full((padding_len,), IGNORE_INDEX, dtype=torch.long, device=targets.device)]
+    )
     return input_ids, targets
 
 
@@ -187,7 +184,6 @@ def preprocess(
     4. Make a deepcopy as the target. Mask human words with IGNORE_INDEX.
     5. Pad to max length.
     """
-    # add end signal and concatenate together
     conversations = _add_speaker_and_signal(conversations)
     input_text = "".join([sentence["value"] for sentence in conversations])
 
@@ -212,18 +208,12 @@ def preprocess(
         else:
             role = from_str
 
-        conv_targets = list(conv_ids)
+        conv_targets = [IGNORE_INDEX] * len(conv_ids)
         if role == "assistant":
             if newline_token_id in conv_ids:
                 newline_idx = conv_ids.index(newline_token_id)
-                for idx in range(newline_idx + 1):
-                    conv_targets[idx] = IGNORE_INDEX
-            else:
-                for idx in range(len(conv_targets)):
-                    conv_targets[idx] = IGNORE_INDEX
-        else:
-            for idx in range(len(conv_targets)):
-                conv_targets[idx] = IGNORE_INDEX
+                conv_targets[: newline_idx + 1] = [IGNORE_INDEX] * (newline_idx + 1)
+                conv_targets[newline_idx + 1 :] = conv_ids[newline_idx + 1 :]
 
         input_ids.extend(conv_ids)
         targets.extend(conv_targets)

@@ -1,6 +1,3 @@
-# Main model implementation for Falcon Vision Encoder
-# A pure vision transformer distilled from DINOv3 and SigLIP2
-
 import einops as E
 import torch
 import torch.nn.functional as F
@@ -171,7 +168,7 @@ class TransformerBlock(nn.Module):
     def init_weights(self, buffer_device: torch.device = None):
         self.attention.init_weights(self.weight_init_std)
         if self.moe_enabled:
-            self.moe.init_weights(self.weight_init_std, buffer_device)
+            self.moe.init_weights(self.weight_init_std)
         else:
             self.feed_forward.init_weights(self.weight_init_std)
 
@@ -188,7 +185,6 @@ class SigLino(nn.Module):
         self.patch_size = args.spatial_patch_size
         self.n_storage_tokens = args.n_storage_tokens
 
-        # Patch embedding
         self.n_pixels_per_patch = args.temporal_patch_size * args.spatial_patch_size**2
         self.img_projector = nn.Linear(
             self.n_pixels_per_patch * args.channel_size,
@@ -196,12 +192,10 @@ class SigLino(nn.Module):
             bias=False,
         )
 
-        # CLS and register tokens
         self.cls_token = nn.Parameter(torch.empty(1, 1, args.dim))
         if self.n_storage_tokens > 0:
             self.storage_tokens = nn.Parameter(torch.empty(1, self.n_storage_tokens, args.dim))
 
-        # RoPE
         head_dim = args.head_dim or args.dim // args.n_heads
         d = head_dim // 2
         self.register_buffer("freqs_cis_golden", self._precompute_golden_freqs_cis(d, args))
@@ -214,7 +208,6 @@ class SigLino(nn.Module):
 
         self.norm = nn.RMSNorm(args.dim, eps=args.norm_eps)
 
-        # Teacher adapters
         self.teachers = dict(zip(args.teachers, args.teachers_dim))
         dinov3_dim = self.teachers.get("dinov3", 1280)
         siglip2_dim = self.teachers.get("siglip2", 1152)
@@ -226,7 +219,6 @@ class SigLino(nn.Module):
             siglip2_dim, 16, siglip2_dim
         )
 
-        # Freeze teacher-specific components
         for param in self.layer_norm_dinov3.parameters():
             param.requires_grad = False
         for param in self.siglip2_multihead_attention_pooling_head.parameters():
@@ -308,12 +300,10 @@ class SigLino(nn.Module):
         ph = pw = self.patch_size
         h, w = H // ph, W // pw
 
-        # Create patches
         patches = images.unfold(2, ph, ph).unfold(3, pw, pw)
         patches = patches.permute(0, 2, 3, 1, 4, 5)  # N, h, w, C, ph, pw
         patches = patches.reshape(N, h * w, C * ph * pw)
 
-        # Create spatial shape tensor
         spatial_shape = torch.tensor([[h, w]] * N, device=images.device)
 
         return patches, spatial_shape
@@ -469,11 +459,6 @@ class SigLino(nn.Module):
         full_mask = torch.cat([cls_reg_mask, padding_mask], dim=1)  # (N, S)
         full_mask_bool = full_mask.bool()
 
-        # Apply input normalization if enabled
-        # if self.args.use_tok_norm:
-        #     h_NSD = F.rms_norm(h_NSD, (h_NSD.size(-1),))
-
-        # Build attention mask using padding mask
         block_mask = self._build_vision_mask(full_mask_bool, device)
 
         # Compute 2D RoPE positions
@@ -505,18 +490,14 @@ class SigLino(nn.Module):
 
         h_NSD = self.norm(h_NSD)
 
-        # Extract features
         cls_feats = h_NSD[:, 0]  # (N, D)
         patch_feats = h_NSD[:, R:]  # (N, L, D) - includes padding positions
 
-        # Project to teacher dimensions
         student_patch_dinov3 = self.dinov3_adapter(patch_feats)
         student_patch_siglip = self.siglip2_adapter(patch_feats)
         student_cls_dinov3 = self.dinov3_adapter(cls_feats)
 
-        # SigLIP2 summary via attention pooling (uses full sequence with mask)
         h_sig = self.siglip2_adapter(h_NSD)
-        # Pass the full mask for attention pooling
         siglip_attn_mask = full_mask.reshape(-1)  # Flatten for pooling head
         student_summary_siglip = self.siglip2_multihead_attention_pooling_head(
             h_sig, siglip_attn_mask

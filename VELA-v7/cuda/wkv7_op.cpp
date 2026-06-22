@@ -219,8 +219,8 @@ void backward_cpu(torch::Tensor &w, torch::Tensor &q, torch::Tensor &k, torch::T
 
                 for (int i = 0; i < C; i++) {
                     for (int j = 0; j < C; j++) {
-                        dstate[i * C + j] = dstate[i * C + j] * w_local[i] + dSb_local[i] * z_local[j];
-                        dstateT[i * C + j] = dstateT[i * C + j] * w_local[j] + z_local[i] * dSb_local[j];
+                        dstate[i * C + j] = dstate[i * C + j] * w_local[j] + dSb_local[i] * z_local[j];
+                        dstateT[i * C + j] = dstateT[i * C + j] * w_local[i] + z_local[i] * dSb_local[j];
                     }
                 }
             }

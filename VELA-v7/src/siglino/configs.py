@@ -1,6 +1,3 @@
-# Model configurations for Falcon Vision
-# Pre-defined architectures for different model sizes
-
 from dataclasses import dataclass, field
 
 from .moe import MoEArgs

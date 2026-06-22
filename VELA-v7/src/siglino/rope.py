@@ -1,7 +1,3 @@
-# RoPE (Rotary Position Embedding) implementation for Falcon Vision
-# Includes 1D RoPE and 2D Golden RoPE for vision tokens
-
-import einops as E
 import torch
 
 
@@ -21,14 +17,6 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> torch.Te
     return torch.polar(torch.ones_like(freqs), freqs)
 
 
-def reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-    ndim = x.ndim
-    seqlen = x.shape[1]
-    freqs_cis = freqs_cis[:seqlen]
-    shape = [d if i == 1 or i == ndim - 1 else 1 for i, d in enumerate(x.shape)]
-    return freqs_cis.view(*shape)
-
-
 def apply_rotary_emb(
     xq: torch.Tensor,
     xk: torch.Tensor,
@@ -44,7 +32,10 @@ def apply_rotary_emb(
     elif pos_t is not None:
         freqs_cis = freqs_cis[pos_t.long()].unsqueeze(-2)
     else:
-        freqs_cis = reshape_for_broadcast(freqs_cis, xq_)
+        ndim = xq_.ndim
+        freqs_cis = freqs_cis[:xq_.shape[1]]
+        shape = [d if i == 1 or i == ndim - 1 else 1 for i, d in enumerate(xq_.shape)]
+        freqs_cis = freqs_cis.view(*shape)
 
     xq_out = torch.view_as_real(xq_ * freqs_cis).flatten(3)
     xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
@@ -62,7 +53,7 @@ def apply_3d_rotary_emb(
     xq_t, xq_hw = xq.chunk(chunks=2, dim=-1)
     xk_t, xk_hw = xk.chunk(chunks=2, dim=-1)
 
-    pos_t = pos_hw[:, :, 0].clone() if pos_hw is not None else None
+    pos_t = pos_hw[:, :, 0] if pos_hw is not None else None
     xq_t, xk_t = apply_rotary_emb(xq_t, xk_t, freqs_cis, pos_t=pos_t)
 
     if freqs_cis_2d is not None and pos_hw is not None:
@@ -119,7 +110,7 @@ def apply_golden_freqs_cis_to_visual_pos(
     freqs_hFP: torch.Tensor, pos_BSP: torch.Tensor
 ) -> torch.Tensor:
     """Apply golden frequencies to visual positions."""
-    img_mask_BS = E.reduce(~torch.isnan(pos_BSP), "b s p -> b s", reduction="all")
+    img_mask_BS = (~torch.isnan(pos_BSP)).all(dim=-1)
     pos_tP = pos_BSP[img_mask_BS].float()
     theta_thF = torch.einsum("tp,hfp->thf", pos_tP, freqs_hFP.float())
     return torch.polar(torch.ones_like(theta_thF.float()), theta_thF.float())
@@ -131,14 +122,12 @@ def apply_golden_rotary_emb(
     pos_BSP: torch.Tensor,
 ) -> torch.Tensor:
     """Apply golden rotary embedding to image tokens only."""
-    img_mask_BS = E.reduce(~torch.isnan(pos_BSP), "b s p -> b s", reduction="all")
+    img_mask_BS = (~torch.isnan(pos_BSP)).all(dim=-1)
     input_thd = input_BShd[img_mask_BS]
 
-    input_thd = torch.view_as_complex(
-        E.rearrange(input_thd.float(), "t h (d two) -> t h d two", two=2)
-    )
+    input_thd = torch.view_as_complex(input_thd.float().view(*input_thd.shape[:-1], -1, 2))
     output_thd = input_thd * freqs_cis_thF
     output_thd = torch.view_as_real(output_thd).flatten(-2).type_as(input_BShd)
 
-    img_mask_BS11 = E.rearrange(img_mask_BS, "b s -> b s 1 1")
+    img_mask_BS11 = img_mask_BS[:, :, None, None]
     return input_BShd.masked_scatter(img_mask_BS11, output_thd)
