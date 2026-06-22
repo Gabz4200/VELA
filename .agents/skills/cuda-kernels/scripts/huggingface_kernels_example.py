@@ -15,7 +15,6 @@ Usage:
 """
 
 import time
-from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -39,6 +38,7 @@ def check_environment():
 # Part 1: Basic Kernel Loading
 # =============================================================================
 
+
 def demo_basic_kernel_loading():
     """Demonstrate basic kernel loading from Hub."""
     print("=" * 60)
@@ -57,19 +57,19 @@ def demo_basic_kernel_loading():
             print("   Kernel is available for this environment")
 
             # Load the kernel
-            print(f"\n2. Loading kernel from Hub...")
+            print("\n2. Loading kernel from Hub...")
             activation = get_kernel(repo_id, version=1)
 
             # Inspect available functions
-            print(f"\n3. Available functions:")
-            functions = [f for f in dir(activation) if not f.startswith('_')]
+            print("\n3. Available functions:")
+            functions = [f for f in dir(activation) if not f.startswith("_")]
             for func in functions[:10]:  # Show first 10
                 print(f"   - {func}")
             if len(functions) > 10:
                 print(f"   ... and {len(functions) - 10} more")
 
             # Test the kernel
-            print(f"\n4. Testing gelu_fast kernel...")
+            print("\n4. Testing gelu_fast kernel...")
             x = torch.randn((4, 4), dtype=torch.float16, device="cuda")
             y = torch.empty_like(x)
 
@@ -77,7 +77,7 @@ def demo_basic_kernel_loading():
             activation.gelu_fast(y, x)
             print(f"   Input shape: {x.shape}")
             print(f"   Output shape: {y.shape}")
-            print(f"   Success!")
+            print("   Success!")
 
             return activation
         else:
@@ -95,6 +95,7 @@ def demo_basic_kernel_loading():
 # =============================================================================
 # Part 2: Benchmark Hub Kernel vs PyTorch
 # =============================================================================
+
 
 def demo_benchmark(activation_kernel):
     """Benchmark Hub kernel against PyTorch implementation."""
@@ -146,6 +147,7 @@ def demo_benchmark(activation_kernel):
 # Part 3: Integration with Models
 # =============================================================================
 
+
 def demo_model_integration():
     """Demonstrate integrating Hub kernels with models."""
     print("\n" + "=" * 60)
@@ -166,8 +168,8 @@ def demo_model_integration():
         layer_norm = get_kernel(repo_id, version=1)
 
         # Check available functions
-        print(f"\n2. Available functions:")
-        functions = [f for f in dir(layer_norm) if not f.startswith('_')]
+        print("\n2. Available functions:")
+        functions = [f for f in dir(layer_norm) if not f.startswith("_")]
         for func in functions:
             print(f"   - {func}")
 
@@ -183,7 +185,7 @@ def demo_model_integration():
                 x = self.linear(x)
                 return x
 
-        print(f"\n3. Creating model and patching RMSNorm...")
+        print("\n3. Creating model and patching RMSNorm...")
         model = SimpleModel().cuda().to(torch.bfloat16)
 
         # Patch RMSNorm to use Hub kernel
@@ -195,13 +197,14 @@ def demo_model_integration():
                     def make_forward(mod, epsilon):
                         def forward(x):
                             # Try different function names based on kernel API
-                            if hasattr(kernel, 'rms_norm'):
+                            if hasattr(kernel, "rms_norm"):
                                 return kernel.rms_norm(x, mod.weight, eps=epsilon)
-                            elif hasattr(kernel, 'rmsnorm'):
+                            elif hasattr(kernel, "rmsnorm"):
                                 return kernel.rmsnorm(x, mod.weight, eps=epsilon)
                             else:
                                 # Fallback to original
                                 return mod._original_forward(x)
+
                         return forward
 
                     module._original_forward = module.forward
@@ -211,13 +214,13 @@ def demo_model_integration():
         patch_rmsnorm(model, layer_norm)
 
         # Test forward pass
-        print(f"\n4. Testing forward pass...")
+        print("\n4. Testing forward pass...")
         x = torch.randn(2, 1024, 2048, dtype=torch.bfloat16, device="cuda")
         with torch.inference_mode():
             y = model(x)
         print(f"   Input: {x.shape}")
         print(f"   Output: {y.shape}")
-        print(f"   Success!")
+        print("   Success!")
 
     except ImportError:
         print("   kernels library not installed")
@@ -228,6 +231,7 @@ def demo_model_integration():
 # =============================================================================
 # Part 4: Using Local Kernels
 # =============================================================================
+
 
 def demo_local_kernel():
     """Demonstrate loading kernels from local path."""
@@ -255,6 +259,7 @@ def demo_local_kernel():
 # =============================================================================
 # Part 5: Publishing Your Own Kernel
 # =============================================================================
+
 
 def demo_publishing_info():
     """Show information about publishing kernels."""
@@ -317,6 +322,7 @@ def demo_publishing_info():
 # =============================================================================
 # Main
 # =============================================================================
+
 
 def main():
     print("=" * 60)

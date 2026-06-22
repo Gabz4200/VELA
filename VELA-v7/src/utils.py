@@ -1,16 +1,16 @@
-import json, time, random, os
-import numpy as np
+import base64
 import dataclasses
 import math
-from torch.nn import functional as F
-from typing import List, Dict
+import time
 from collections import defaultdict
-from PIL import Image
 from io import BytesIO
-import base64
+from typing import Dict, List
+
+from PIL import Image
 
 time_slot = {}
 time_ref = time.time_ns()
+
 
 def record_time(name):
     if name not in time_slot:
@@ -27,16 +27,17 @@ def load_image_from_base64(image):
 def largest_3n_plus_2_prime(x):
     if x <= 2:
         return max(1, x)
+
     def is_prime(num):
         if num < 2:
             return False
-        for i in range(2, int(num ** 0.5) + 1):
+        for i in range(2, int(num**0.5) + 1):
             if num % i == 0:
                 return False
         return True
-    
+
     # Integer division to obtain an integer n such that 3n+2 <= x
-    n = x // 3  
+    n = x // 3
     while True:
         num = 3 * n + 2
         if num <= x and is_prime(num):
@@ -45,9 +46,9 @@ def largest_3n_plus_2_prime(x):
 
 
 def split_image_into_regions(image, n, m):
-    '''
+    """
     Split the image into n x m regions.
-    '''
+    """
     width, height = image.size
     tile_width = width // m
     tile_height = height // n
@@ -61,7 +62,7 @@ def split_image_into_regions(image, n, m):
     return regions
 
 
-def select_best_resolution(original_size, region_size=(256, 256), criterion='closest'):
+def select_best_resolution(original_size, region_size=(256, 256), criterion="closest"):
     """
     Selects the best resolution by minimizing both wasted area and criterion: smallest, or closest to original size.
 
@@ -74,21 +75,28 @@ def select_best_resolution(original_size, region_size=(256, 256), criterion='clo
     """
     original_width, original_height = original_size
     best_fit = None
-    min_wasted_resolution = float('inf')
+    min_wasted_resolution = float("inf")
 
     # generate all possible resolutions
-    n_col = math.ceil(original_width / region_size[0]) 
+    n_col = math.ceil(original_width / region_size[0])
     n_row = math.ceil(original_height / region_size[1])
     s_col, e_col = max(1, n_col - 1), n_col + 1
     s_row, e_row = max(1, n_row - 1), n_row + 1
-    possible_resolutions = [(region_size[0] * i, region_size[1] * j) for i in range(s_col, e_col) for j in range(s_row, e_row)]
+    possible_resolutions = [
+        (region_size[0] * i, region_size[1] * j)
+        for i in range(s_col, e_col)
+        for j in range(s_row, e_row)
+    ]
 
     for width, height in possible_resolutions:
         scale = min(width / original_width, height / original_height)
-        downscaled_width, downscaled_height = int(original_width * scale), int(original_height * scale)
+        downscaled_width, downscaled_height = (
+            int(original_width * scale),
+            int(original_height * scale),
+        )
         effective_resolution = downscaled_width * downscaled_height
         wasted_resolution = abs((width * height) - effective_resolution)
-        if criterion == 'closest':
+        if criterion == "closest":
             size_deviation = abs((width * height) - (original_width * original_height))
             wasted_resolution += size_deviation
 
@@ -123,6 +131,7 @@ def image_to_regions(image, region_size=(256, 256)):
 @dataclasses.dataclass
 class Conversation:
     """A class that keeps all conversation history."""
+
     id: str
     roles: List[str]
     conversations: List[Dict[str, str]]
@@ -135,7 +144,7 @@ class Conversation:
 def compress_parameter_names(parameter_names):
     compressed = defaultdict(set)
     for weight in parameter_names:
-        parts = weight.split('.')
+        parts = weight.split(".")
         # find the block number which is a number
         split_index = None
         for i, part in enumerate(parts):
@@ -145,19 +154,49 @@ def compress_parameter_names(parameter_names):
                 break
         if split_index is not None:
             block = parts[split_index]  # 提取block号
-            rest = '.'.join(parts[split_index+1:])  # 剩余部分
-            prefix = '.'.join(parts[:split_index]) # 
+            rest = ".".join(parts[split_index + 1 :])  # 剩余部分
+            prefix = ".".join(parts[:split_index])  #
             compressed[(prefix, rest)].add(block)
         else:
-            compressed[(weight, '')].add('')
+            compressed[(weight, "")].add("")
 
     # 格式化输出，合并具有相同rest部分的block号
     output = []
     for (prefix, rest), blocks in compressed.items():
         if rest and blocks:
             blocks = sorted([int(b) for b in blocks])
-            block_range = '{' + ','.join(map(str, blocks)) + '}'
-            output.append(f'{prefix}.{block_range}.{rest}')
+            block_range = "{" + ",".join(map(str, blocks)) + "}"
+            output.append(f"{prefix}.{block_range}.{rest}")
         else:
             output.append(prefix)
     return output
+
+
+def convert_rwkv7_to_vela7_moe(state_dict):
+    """Converts a standard RWKV-7 state dict to Vela7 MoE format.
+    Specifically, for layers < 4, duplicates the ffn weights to 4 experts.
+    """
+    new_state_dict = {}
+    for k, v in state_dict.items():
+        parts = k.split(".")
+        is_ffn = False
+        ffn_part_idx = -1
+        for idx, part in enumerate(parts):
+            if part == "blocks" and idx + 1 < len(parts) and parts[idx + 1].isdigit():
+                l_idx = int(parts[idx + 1])
+                if l_idx < 4:
+                    if idx + 2 < len(parts) and parts[idx + 2] == "ffn":
+                        is_ffn = True
+                        ffn_part_idx = idx + 2
+                        break
+
+        if is_ffn:
+            prefix = ".".join(parts[:ffn_part_idx])
+            suffix = ".".join(parts[ffn_part_idx + 1 :])
+            for expert_idx in range(4):
+                new_key = f"{prefix}.experts.{expert_idx}.{suffix}"
+                new_state_dict[new_key] = v.clone()
+        else:
+            new_state_dict[k] = v
+
+    return new_state_dict

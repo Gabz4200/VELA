@@ -1,20 +1,22 @@
+from typing import Dict, Optional, Tuple, Union
+
+import einops as E
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import einops as E
-from typing import Optional, Dict, Union, Tuple
 from transformers import PreTrainedModel
-from transformers.modeling_outputs import BaseModelOutput
+
+from .attention import Attention, create_attention_mask
 
 # Relative imports from your local files
 from .configuration_siglino import SigLinoConfig
-from .attention import Attention, create_attention_mask
-from .moe import MoE, FeedForward
+from .moe import FeedForward, MoE
 from .rope import (
+    apply_golden_freqs_cis_to_visual_pos,
     precompute_freqs_cis,
     precompute_golden_freqs_cis,
-    apply_golden_freqs_cis_to_visual_pos,
 )
+
 
 class Siglip2MLP(nn.Module):
     def __init__(self, hidden_size: int, intermediate_size: int):
@@ -29,6 +31,7 @@ class Siglip2MLP(nn.Module):
         hidden_states = self.fc2(hidden_states)
         return hidden_states
 
+
 class Siglip2MultiheadAttentionPoolingHead(nn.Module):
     def __init__(self, hidden_size: int, num_attention_heads: int, output_dim: int):
         super().__init__()
@@ -38,7 +41,9 @@ class Siglip2MultiheadAttentionPoolingHead(nn.Module):
         self.mlp = Siglip2MLP(hidden_size, 4304)
         self.num_heads = num_attention_heads
 
-    def forward(self, hidden_state: torch.Tensor, attention_mask: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(
+        self, hidden_state: torch.Tensor, attention_mask: torch.Tensor | None = None
+    ) -> torch.Tensor:
         batch_size = hidden_state.shape[0]
         probe = self.probe.repeat(batch_size, 1, 1)
 
@@ -50,7 +55,9 @@ class Siglip2MultiheadAttentionPoolingHead(nn.Module):
                 tgt_len = tgt_len if tgt_len is not None else src_len
                 expanded_mask = mask[:, None, None, :].expand(bsz, 1, tgt_len, src_len).to(dtype)
                 inverted_mask = torch.tensor(1.0, dtype=dtype, device=mask.device) - expanded_mask
-                return inverted_mask.masked_fill(inverted_mask.to(torch.bool), torch.finfo(dtype).min)
+                return inverted_mask.masked_fill(
+                    inverted_mask.to(torch.bool), torch.finfo(dtype).min
+                )
 
             attention_mask = E.rearrange(attention_mask, "(b s) -> b s", b=batch_size)
             target_len, source_len = probe.shape[1], hidden_state.shape[1]
@@ -58,11 +65,14 @@ class Siglip2MultiheadAttentionPoolingHead(nn.Module):
             attention_mask = attention_mask.repeat(1, self.num_heads, target_len, 1)
             attention_mask = attention_mask.reshape(-1, target_len, source_len)
 
-        hidden_state = self.attention(probe, hidden_state, hidden_state, attn_mask=attention_mask)[0]
+        hidden_state = self.attention(probe, hidden_state, hidden_state, attn_mask=attention_mask)[
+            0
+        ]
         residual = hidden_state
         hidden_state = self.layernorm(hidden_state)
         hidden_state = residual + self.mlp(hidden_state)
         return hidden_state[:, 0]
+
 
 class Adapter(nn.Module):
     def __init__(self, in_dim: int, out_dim: int, bias: bool = True):
@@ -79,11 +89,12 @@ class Adapter(nn.Module):
         x = self.fc2(x)
         return x
 
+
 class TransformerBlock(nn.Module):
     def __init__(self, layer_id: int, config: SigLinoConfig):
         super().__init__()
         self.dim = config.dim
-        self.parameterized_norm = getattr(config, 'parameterized_norm', True)
+        self.parameterized_norm = getattr(config, "parameterized_norm", True)
         if self.parameterized_norm:
             self.attention_norm = nn.RMSNorm(config.dim, eps=config.norm_eps)
             self.ffn_norm = nn.RMSNorm(config.dim, eps=config.norm_eps)
@@ -103,13 +114,14 @@ class TransformerBlock(nn.Module):
         moe_args = config.moe_args
         if isinstance(moe_args, dict):
             from .moe import MoEArgs
+
             moe_args = MoEArgs(**moe_args)
 
-        first_n_dense = getattr(config, 'first_n_layers_dense', 0)
+        first_n_dense = getattr(config, "first_n_layers_dense", 0)
         use_dense = layer_id < first_n_dense
         if use_dense:
-            ffn_hidden = getattr(config, 'ffn_dim', None) or config.moe_dim
-            activation = getattr(config, 'activation', 'silu')
+            ffn_hidden = getattr(config, "ffn_dim", None) or config.moe_dim
+            activation = getattr(config, "activation", "silu")
             self.feed_forward = FeedForward(config.dim, ffn_hidden, activation=activation)
             self.moe_enabled = False
         elif moe_args and moe_args.num_experts > 0:
@@ -121,7 +133,9 @@ class TransformerBlock(nn.Module):
 
         self.weight_init_std = 0.02 / (2 * (layer_id + 1)) ** 0.5
 
-    def forward(self, x, freqs_cis, freqs_cis_2d=None, pos_thw=None, attention_masks=None, compile=False):
+    def forward(
+        self, x, freqs_cis, freqs_cis_2d=None, pos_thw=None, attention_masks=None, compile=False
+    ):
         if self.parameterized_norm:
             x_norm = self.attention_norm(x)
         else:
@@ -137,6 +151,7 @@ class TransformerBlock(nn.Module):
         h_norm = self.ffn_norm(h) if self.parameterized_norm else F.rms_norm(h, (h.size(-1),))
         out = h + self.moe(h_norm) if self.moe_enabled else h + self.feed_forward(h_norm)
         return out
+
 
 class SigLinoPreTrainedModel(PreTrainedModel):
     config_class = SigLinoConfig
@@ -182,7 +197,7 @@ class SigLinoModel(SigLinoPreTrainedModel):
         self.n_storage_tokens = config.n_storage_tokens
 
         # Patch embedding
-        self.n_pixels_per_patch = config.temporal_patch_size * config.spatial_patch_size ** 2
+        self.n_pixels_per_patch = config.temporal_patch_size * config.spatial_patch_size**2
         self.img_projector = nn.Linear(
             self.n_pixels_per_patch * config.channel_size,
             config.dim,
@@ -239,13 +254,13 @@ class SigLinoModel(SigLinoPreTrainedModel):
             xlim, ylim = (W / H) ** 0.5, (H / W) ** 0.5
             h_norm = -ylim + 2 * ylim * h_coords / max(H - 1, 1)
             w_norm = -xlim + 2 * xlim * w_coords / max(W - 1, 1)
-            
+
             # Vectorized fill for patches
-            h_grid, w_grid = torch.meshgrid(h_norm, w_norm, indexing='ij')
-            hpos[n, R:R+H*W] = h_grid.reshape(-1)
-            wpos[n, R:R+H*W] = w_grid.reshape(-1)
-            
-            hpos[n, :R], wpos[n, :R] = float('nan'), float('nan')
+            h_grid, w_grid = torch.meshgrid(h_norm, w_norm, indexing="ij")
+            hpos[n, R : R + H * W] = h_grid.reshape(-1)
+            wpos[n, R : R + H * W] = w_grid.reshape(-1)
+
+            hpos[n, :R], wpos[n, :R] = float("nan"), float("nan")
 
         return torch.stack([tpos, hpos, wpos], dim=0)
 
@@ -264,7 +279,7 @@ class SigLinoModel(SigLinoPreTrainedModel):
 
         if padding_mask is None:
             padding_mask = torch.ones((N, L), dtype=pixel_values.dtype, device=device)
-        
+
         h_NLD = self.img_projector(pixel_values)
         cls_expanded = self.cls_token.expand(N, -1, -1)
         if self.n_storage_tokens > 0:
@@ -276,11 +291,11 @@ class SigLinoModel(SigLinoPreTrainedModel):
         S = h_NSD.shape[1]
         cls_reg_mask = torch.ones((N, R), dtype=padding_mask.dtype, device=device)
         full_mask = torch.cat([cls_reg_mask, padding_mask], dim=1)
-        
+
         # FlexAttention Mask
         def mask_mod(b, h, q_idx, kv_idx):
             return full_mask.bool()[b, q_idx] & full_mask.bool()[b, kv_idx]
-        
+
         block_mask = create_attention_mask(mask_mod, N, None, S, S)
 
         # RoPE
@@ -288,8 +303,10 @@ class SigLinoModel(SigLinoPreTrainedModel):
         pos_thw = E.rearrange(thw_pos, "p n s -> n s p").to(dtype=torch.float32)
         patch_mask_2d = torch.zeros((N, S), dtype=torch.bool, device=device)
         patch_mask_2d[:, R:] = padding_mask.bool()
-        pos_thw[:, :, 1:] = pos_thw[:, :, 1:].masked_fill(~patch_mask_2d.unsqueeze(-1), float("nan"))
-        
+        pos_thw[:, :, 1:] = pos_thw[:, :, 1:].masked_fill(
+            ~patch_mask_2d.unsqueeze(-1), float("nan")
+        )
+
         freqs_cis_golden = apply_golden_freqs_cis_to_visual_pos(
             self.freqs_cis_golden.to(dtype=pos_thw.dtype), pos_thw[:, :, 1:]
         )
@@ -298,22 +315,30 @@ class SigLinoModel(SigLinoPreTrainedModel):
         for layer in self.layers:
             if output_hidden_states:
                 all_hidden_states += (h_NSD,)
-            h_NSD = layer(h_NSD, self.freqs_cis, freqs_cis_2d=freqs_cis_golden, 
-                          pos_thw=pos_thw, attention_masks=block_mask, compile=compile)
+            h_NSD = layer(
+                h_NSD,
+                self.freqs_cis,
+                freqs_cis_2d=freqs_cis_golden,
+                pos_thw=pos_thw,
+                attention_masks=block_mask,
+                compile=compile,
+            )
 
         h_NSD = self.norm(h_NSD)
-        
+
         # Feature Extraction & Adapters
         cls_feats = h_NSD[:, 0]
         patch_feats = h_NSD[:, R:]
-        
+
         student_patch_dinov3 = self.dinov3_adapter(patch_feats)
         student_patch_siglip = self.siglip2_adapter(patch_feats)
         student_cls_dinov3 = self.dinov3_adapter(cls_feats)
 
         h_sig = self.siglip2_adapter(h_NSD)
         siglip_attn_mask = full_mask.reshape(-1)
-        student_summary_siglip = self.siglip2_multihead_attention_pooling_head(h_sig, siglip_attn_mask)
+        student_summary_siglip = self.siglip2_multihead_attention_pooling_head(
+            h_sig, siglip_attn_mask
+        )
 
         output = {
             "last_hidden_state": h_NSD,

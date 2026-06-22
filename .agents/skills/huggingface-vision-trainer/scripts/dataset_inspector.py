@@ -20,21 +20,25 @@ Usage with HF Jobs:
 """
 
 import argparse
+import json
 import math
 import sys
-import json
-import urllib.request
 import urllib.parse
-from typing import List, Dict, Any, Tuple
+import urllib.request
+from typing import Any, Dict, List, Tuple
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Inspect dataset format for vision model training")
     parser.add_argument("--dataset", type=str, required=True, help="Dataset name")
     parser.add_argument("--split", type=str, default="train", help="Dataset split (default: train)")
-    parser.add_argument("--config", type=str, default="default", help="Dataset config name (default: default)")
+    parser.add_argument(
+        "--config", type=str, default="default", help="Dataset config name (default: default)"
+    )
     parser.add_argument("--preview", type=int, default=150, help="Max chars per field preview")
-    parser.add_argument("--samples", type=int, default=5, help="Number of samples to fetch (default: 5)")
+    parser.add_argument(
+        "--samples", type=int, default=5, help="Number of samples to fetch (default: 5)"
+    )
     parser.add_argument("--json-output", action="store_true", help="Output as JSON")
     return parser.parse_args()
 
@@ -133,7 +137,7 @@ def analyze_annotations(sample_rows: List[Dict], annotation_cols: List[str]) -> 
         "categories_found": [],
         "avg_objects_per_image": 0,
         "max_objects": 0,
-        "min_objects": float('inf'),
+        "min_objects": float("inf"),
     }
 
     total_objects = 0
@@ -150,10 +154,7 @@ def analyze_annotations(sample_rows: List[Dict], annotation_cols: List[str]) -> 
         # Check if it's a list of annotations or a dict
         if isinstance(ann, dict):
             # COCO-style or structured annotation
-            sample_structure = {
-                "type": "dict",
-                "keys": list(ann.keys())
-            }
+            sample_structure = {"type": "dict", "keys": list(ann.keys())}
 
             # Check for bounding boxes
             if "bbox" in ann or "bboxes" in ann:
@@ -164,8 +165,12 @@ def analyze_annotations(sample_rows: List[Dict], annotation_cols: List[str]) -> 
                         # Multiple bboxes
                         num_objects = len(bboxes)
                         total_objects += num_objects
-                        annotations_info["max_objects"] = max(annotations_info["max_objects"], num_objects)
-                        annotations_info["min_objects"] = min(annotations_info["min_objects"], num_objects)
+                        annotations_info["max_objects"] = max(
+                            annotations_info["max_objects"], num_objects
+                        )
+                        annotations_info["min_objects"] = min(
+                            annotations_info["min_objects"], num_objects
+                        )
 
                         # Analyze first bbox format
                         bbox_format = detect_bbox_format(bboxes[0], image_size)
@@ -179,7 +184,15 @@ def analyze_annotations(sample_rows: List[Dict], annotation_cols: List[str]) -> 
                         annotations_info["bbox_formats"].append(bbox_format)
 
             # Check for categories/classes
-            for key in ["category", "categories", "label", "labels", "class", "classes", "category_id"]:
+            for key in [
+                "category",
+                "categories",
+                "label",
+                "labels",
+                "class",
+                "classes",
+                "category_id",
+            ]:
                 if key in ann:
                     cats = ann[key]
                     if isinstance(cats, list):
@@ -194,7 +207,7 @@ def analyze_annotations(sample_rows: List[Dict], annotation_cols: List[str]) -> 
             sample_structure = {
                 "type": "list",
                 "length": len(ann),
-                "item_type": type(ann[0]).__name__ if ann else None
+                "item_type": type(ann[0]).__name__ if ann else None,
             }
 
             if ann and isinstance(ann[0], dict):
@@ -224,7 +237,7 @@ def analyze_annotations(sample_rows: List[Dict], annotation_cols: List[str]) -> 
     if valid_samples > 0:
         annotations_info["avg_objects_per_image"] = round(total_objects / valid_samples, 2)
 
-    if annotations_info["min_objects"] == float('inf'):
+    if annotations_info["min_objects"] == float("inf"):
         annotations_info["min_objects"] = 0
 
     # Get unique categories
@@ -234,13 +247,16 @@ def analyze_annotations(sample_rows: List[Dict], annotation_cols: List[str]) -> 
     # Get most common bbox format
     if annotations_info["bbox_formats"]:
         from collections import Counter
+
         format_counts = Counter(annotations_info["bbox_formats"])
         annotations_info["primary_bbox_format"] = format_counts.most_common(1)[0][0]
 
     return annotations_info
 
 
-def check_image_classification_compatibility(columns: List[str], sample_rows: List[Dict], features: List[Dict]) -> Dict[str, Any]:
+def check_image_classification_compatibility(
+    columns: List[str], sample_rows: List[Dict], features: List[Dict]
+) -> Dict[str, Any]:
     """Check image classification dataset compatibility"""
 
     image_cols = find_columns(columns, ["image", "img", "picture", "photo"])
@@ -293,7 +309,9 @@ def check_image_classification_compatibility(columns: List[str], sample_rows: Li
     }
 
 
-def check_object_detection_compatibility(columns: List[str], sample_rows: List[Dict]) -> Dict[str, Any]:
+def check_object_detection_compatibility(
+    columns: List[str], sample_rows: List[Dict]
+) -> Dict[str, Any]:
     """Check object detection dataset compatibility"""
 
     # Find image column
@@ -301,15 +319,21 @@ def check_object_detection_compatibility(columns: List[str], sample_rows: List[D
     has_image = len(image_cols) > 0
 
     # Find annotation columns
-    annotation_cols = find_columns(columns, ["objects", "annotations", "ann", "bbox", "bboxes", "detection"])
+    annotation_cols = find_columns(
+        columns, ["objects", "annotations", "ann", "bbox", "bboxes", "detection"]
+    )
     has_annotations = len(annotation_cols) > 0
 
     # Analyze annotations
-    annotations_info = analyze_annotations(sample_rows, annotation_cols) if has_annotations else {"found": False}
+    annotations_info = (
+        analyze_annotations(sample_rows, annotation_cols) if has_annotations else {"found": False}
+    )
 
     # Check for separate bbox and category columns
     bbox_cols = find_columns(columns, ["bbox", "bboxes", "boxes"])
-    category_cols = find_columns(columns, ["category", "label", "class", "categories", "labels", "classes"])
+    category_cols = find_columns(
+        columns, ["category", "label", "class", "categories", "labels", "classes"]
+    )
 
     # Determine readiness
     ready = has_image and (has_annotations or (len(bbox_cols) > 0 and len(category_cols) > 0))
@@ -326,7 +350,9 @@ def check_object_detection_compatibility(columns: List[str], sample_rows: List[D
     }
 
 
-def check_sam_segmentation_compatibility(columns: List[str], sample_rows: List[Dict], features: List[Dict]) -> Dict[str, Any]:
+def check_sam_segmentation_compatibility(
+    columns: List[str], sample_rows: List[Dict], features: List[Dict]
+) -> Dict[str, Any]:
     """Check SAM/SAM2 segmentation dataset compatibility.
 
     A valid SAM segmentation dataset needs:
@@ -368,7 +394,9 @@ def check_sam_segmentation_compatibility(columns: List[str], sample_rows: List[D
                     prompt_info["prompt_type"] = "bbox"
                     prompt_info["source"] = f"JSON column '{prompt_cols[0]}'"
                     bbox = parsed.get("bbox") or parsed.get("box")
-                    prompt_info["bbox_valid"] = _validate_bbox(bbox, _extract_image_size(row["row"]))
+                    prompt_info["bbox_valid"] = _validate_bbox(
+                        bbox, _extract_image_size(row["row"])
+                    )
                     break
                 elif "point" in parsed or "points" in parsed:
                     prompt_info["has_prompt"] = True
@@ -468,7 +496,7 @@ def generate_mapping_code(info: Dict[str, Any]) -> str:
         if "coco" in bbox_format.lower() or "xywh" in bbox_format.lower():
             # Already COCO format
             return f"""# Dataset appears to be in COCO format (xywh)
-# Image column: {info['image_columns'][0] if info['image_columns'] else 'image'}
+# Image column: {info["image_columns"][0] if info["image_columns"] else "image"}
 # Annotation column: {ann_col}
 # Use directly with transformers object detection models"""
         elif "xyxy" in bbox_format.lower():
@@ -546,14 +574,14 @@ def format_value_preview(value: Any, max_chars: int) -> str:
 def main():
     args = parse_args()
 
-    print(f"Fetching dataset info via Datasets Server API...")
+    print("Fetching dataset info via Datasets Server API...")
 
     try:
         # Get splits info
         splits_data = get_splits(args.dataset)
         if not splits_data or "splits" not in splits_data:
             print(f"ERROR: Could not fetch splits for dataset '{args.dataset}'")
-            print(f"       Dataset may not exist or is not accessible via Datasets Server API")
+            print("       Dataset may not exist or is not accessible via Datasets Server API")
             sys.exit(1)
 
         # Find the right config
@@ -594,7 +622,11 @@ def main():
         total_examples = "Unknown"
         for split_info in splits_data["splits"]:
             if split_info["config"] == config_to_use and split_info["split"] == args.split:
-                total_examples = f"{split_info.get('num_examples', 'Unknown'):,}" if isinstance(split_info.get('num_examples'), int) else "Unknown"
+                total_examples = (
+                    f"{split_info.get('num_examples', 'Unknown'):,}"
+                    if isinstance(split_info.get("num_examples"), int)
+                    else "Unknown"
+                )
                 break
 
     except Exception as e:
@@ -614,7 +646,9 @@ def main():
             "split": args.split,
             "total_examples": total_examples,
             "columns": columns,
-            "features": [{"name": f["name"], "type": f["type"]} for f in features] if features else [],
+            "features": [{"name": f["name"], "type": f["type"]} for f in features]
+            if features
+            else [],
             "object_detection_compatibility": od_info,
             "image_classification_compatibility": ic_info,
             "sam_segmentation_compatibility": sam_info,
@@ -624,7 +658,7 @@ def main():
 
     # Human-readable output optimized for LLM parsing
     print("=" * 80)
-    print(f"VISION DATASET INSPECTION")
+    print("VISION DATASET INSPECTION")
     print("=" * 80)
 
     print(f"\nDataset: {args.dataset}")
@@ -653,13 +687,13 @@ def main():
     print(f"\n{'IMAGE CLASSIFICATION COMPATIBILITY':-<80}")
     print(f"\n[STATUS] {'✓ READY' if ic_info['ready'] else '✗ NOT COMPATIBLE'}")
 
-    print(f"\nImage Column:")
+    print("\nImage Column:")
     if ic_info["has_image"]:
         print(f"  ✓ Found: {', '.join(ic_info['image_columns'])}")
     else:
-        print(f"  ✗ No image column detected")
+        print("  ✗ No image column detected")
 
-    print(f"\nLabel Column:")
+    print("\nLabel Column:")
     if ic_info["has_label"]:
         print(f"  ✓ Found: {', '.join(ic_info['label_columns'])}")
         li = ic_info["label_info"]
@@ -680,69 +714,69 @@ def main():
                 display += f" ... ({li['sample_unique_count']}+ from sample)"
             print(f"    • Sample labels: {display}")
     else:
-        print(f"  ✗ No label column detected")
-        print(f"  Expected column names: 'label', 'labels', 'class', 'fine_label'")
+        print("  ✗ No label column detected")
+        print("  Expected column names: 'label', 'labels', 'class', 'fine_label'")
 
     if ic_info["ready"]:
         lc = ic_info["label_info"].get("column", "label")
-        print(f"\n  Use with: scripts/image_classification_training.py")
+        print("\n  Use with: scripts/image_classification_training.py")
         print(f"    --image_column_name {ic_info['image_columns'][0]} --label_column_name {lc}")
 
     # --- Object Detection ---
     print(f"\n{'OBJECT DETECTION COMPATIBILITY':-<80}")
     print(f"\n[STATUS] {'✓ READY' if od_info['ready'] else '✗ NOT COMPATIBLE'}")
 
-    print(f"\nImage Column:")
+    print("\nImage Column:")
     if od_info["has_image"]:
         print(f"  ✓ Found: {', '.join(od_info['image_columns'])}")
     else:
-        print(f"  ✗ No image column detected")
-        print(f"  Expected column names: 'image', 'img', 'picture', 'photo'")
+        print("  ✗ No image column detected")
+        print("  Expected column names: 'image', 'img', 'picture', 'photo'")
 
-    print(f"\nAnnotations:")
+    print("\nAnnotations:")
     if od_info["has_annotations"]:
         print(f"  ✓ Found: {', '.join(od_info['annotation_columns'])}")
         ann_info = od_info["annotations_info"]
         if ann_info.get("found"):
-            print(f"\n  Annotation Details:")
+            print("\n  Annotation Details:")
             print(f"    • Column: {ann_info['column']}")
             if ann_info.get("primary_bbox_format"):
                 print(f"    • BBox Format: {ann_info['primary_bbox_format']}")
             if ann_info.get("num_classes", 0) > 0:
                 print(f"    • Number of Classes: {ann_info['num_classes']}")
                 print(f"    • Classes: {', '.join(ann_info['categories_found'][:10])}")
-                if len(ann_info['categories_found']) > 10:
+                if len(ann_info["categories_found"]) > 10:
                     print(f"      (showing first 10 of {len(ann_info['categories_found'])})")
             print(f"    • Avg Objects/Image: {ann_info['avg_objects_per_image']}")
             print(f"    • Min Objects: {ann_info['min_objects']}")
             print(f"    • Max Objects: {ann_info['max_objects']}")
     elif od_info["separate_bbox_columns"] and od_info["separate_category_columns"]:
-        print(f"  ⚠ Separate bbox and category columns found:")
+        print("  ⚠ Separate bbox and category columns found:")
         print(f"    BBox columns: {', '.join(od_info['separate_bbox_columns'])}")
         print(f"    Category columns: {', '.join(od_info['separate_category_columns'])}")
-        print(f"  Action: These need to be combined (see mapping code below)")
+        print("  Action: These need to be combined (see mapping code below)")
     else:
-        print(f"  ✗ No annotation columns detected")
-        print(f"  Expected: 'objects', 'annotations', 'bbox'/'bboxes' + 'category'/'label'")
+        print("  ✗ No annotation columns detected")
+        print("  Expected: 'objects', 'annotations', 'bbox'/'bboxes' + 'category'/'label'")
 
     # --- SAM Segmentation ---
     print(f"\n{'SAM SEGMENTATION COMPATIBILITY':-<80}")
     print(f"\n[STATUS] {'✓ READY' if sam_info['ready'] else '✗ NOT COMPATIBLE'}")
 
-    print(f"\nImage Column:")
+    print("\nImage Column:")
     if sam_info["has_image"]:
         print(f"  ✓ Found: {', '.join(sam_info['image_columns'])}")
     else:
-        print(f"  ✗ No image column detected")
+        print("  ✗ No image column detected")
 
-    print(f"\nMask Column:")
+    print("\nMask Column:")
     if sam_info["has_mask"]:
         print(f"  ✓ Found: {', '.join(sam_info['mask_columns'])}")
     else:
-        print(f"  ✗ No mask column detected")
-        print(f"  Expected column names: 'mask', 'segmentation', 'alpha', 'matte'")
+        print("  ✗ No mask column detected")
+        print("  Expected column names: 'mask', 'segmentation', 'alpha', 'matte'")
 
-    print(f"\nPrompt:")
+    print("\nPrompt:")
     pi = sam_info["prompt_info"]
     if pi["has_prompt"]:
         print(f"  ✓ Type: {pi['prompt_type']} (from {pi['source']})")
@@ -757,15 +791,15 @@ def main():
             else:
                 print(f"    ✗ Invalid bbox: {bv.get('error', 'unknown error')}")
     else:
-        print(f"  ✗ No prompt detected")
-        print(f"  Expected: 'prompt' column (JSON with bbox/point), or 'bbox'/'point' column")
+        print("  ✗ No prompt detected")
+        print("  Expected: 'prompt' column (JSON with bbox/point), or 'bbox'/'point' column")
 
     if sam_info["ready"]:
         pc = sam_info["prompt_columns"][0] if sam_info["prompt_columns"] else None
         args_hint = f"--prompt_type {pi['prompt_type']}"
         if pc:
             args_hint += f" --prompt_column_name {pc}"
-        print(f"\n  Use with: scripts/sam_segmentation_training.py")
+        print("\n  Use with: scripts/sam_segmentation_training.py")
         print(f"    {args_hint}")
 
     # Mapping code (OD only)
@@ -775,15 +809,17 @@ def main():
         print(f"\n{'OD PREPROCESSING CODE':-<80}")
         print(mapping_code)
     elif od_info["ready"]:
-        print(f"\n  ✓ No OD preprocessing needed.")
+        print("\n  ✓ No OD preprocessing needed.")
 
     # --- Summary ---
     print(f"\n{'SUMMARY':-<80}")
     if ic_info["ready"]:
-        num_cls = ic_info["label_info"].get("num_classes") or ic_info["label_info"].get("sample_unique_count", "?")
+        num_cls = ic_info["label_info"].get("num_classes") or ic_info["label_info"].get(
+            "sample_unique_count", "?"
+        )
         print(f"✓ Image Classification: READY ({num_cls} classes)")
     else:
-        print(f"✗ Image Classification: not compatible")
+        print("✗ Image Classification: not compatible")
 
     if od_info["ready"]:
         ann_info = od_info["annotations_info"]
@@ -791,14 +827,14 @@ def main():
         cls = ann_info.get("num_classes", "?")
         print(f"✓ Object Detection: READY ({cls} classes, {fmt})")
     else:
-        print(f"✗ Object Detection: not compatible")
+        print("✗ Object Detection: not compatible")
 
     if sam_info["ready"]:
         print(f"✓ SAM Segmentation: READY (prompt: {pi['prompt_type']})")
     else:
-        print(f"✗ SAM Segmentation: not compatible")
+        print("✗ SAM Segmentation: not compatible")
 
-    print(f"\nNote: Used Datasets Server API (instant, no download required)")
+    print("\nNote: Used Datasets Server API (instant, no download required)")
 
     print("\n" + "=" * 80)
     sys.exit(0)

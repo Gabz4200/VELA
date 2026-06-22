@@ -1,13 +1,21 @@
 # RoPE (Rotary Position Embedding) implementation for Falcon Vision
 # Includes 1D RoPE and 2D Golden RoPE for vision tokens
 
-import torch
 import einops as E
+import torch
 
 
 def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> torch.Tensor:
     """Precompute frequency tensor for 1D rotary embeddings."""
-    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2, device=theta.device if isinstance(theta, torch.Tensor) else None)[: (dim // 2)].float() / dim))
+    freqs = 1.0 / (
+        theta
+        ** (
+            torch.arange(
+                0, dim, 2, device=theta.device if isinstance(theta, torch.Tensor) else None
+            )[: (dim // 2)].float()
+            / dim
+        )
+    )
     t = torch.arange(end, device=freqs.device)
     freqs = torch.outer(t, freqs).float()
     return torch.polar(torch.ones_like(freqs), freqs)
@@ -30,14 +38,14 @@ def apply_rotary_emb(
     """Apply rotary embeddings to query and key tensors."""
     xq_ = torch.view_as_complex(xq.float().reshape(*xq.shape[:-1], -1, 2))
     xk_ = torch.view_as_complex(xk.float().reshape(*xk.shape[:-1], -1, 2))
-    
+
     if freqs_cis.ndim == 3:
         freqs_cis = freqs_cis.unsqueeze(-2)
     elif pos_t is not None:
         freqs_cis = freqs_cis[pos_t.long()].unsqueeze(-2)
     else:
         freqs_cis = reshape_for_broadcast(freqs_cis, xq_)
-    
+
     xq_out = torch.view_as_real(xq_ * freqs_cis).flatten(3)
     xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
     return xq_out.type_as(xq), xk_out.type_as(xk)
@@ -56,7 +64,7 @@ def apply_3d_rotary_emb(
 
     pos_t = pos_hw[:, :, 0].clone() if pos_hw is not None else None
     xq_t, xk_t = apply_rotary_emb(xq_t, xk_t, freqs_cis, pos_t=pos_t)
-    
+
     if freqs_cis_2d is not None and pos_hw is not None:
         xq_hw = apply_golden_rotary_emb(xq_hw, freqs_cis_2d, pos_hw[..., 1:])
         xk_hw = apply_golden_rotary_emb(xk_hw, freqs_cis_2d, pos_hw[..., 1:])
@@ -96,18 +104,24 @@ def precompute_golden_freqs_cis(
     n_zero_freqs = round(p_zero_freqs * n_freqs)
     # directions must be computed first so we can derive a device for omega_F
     directions_hFP = make_directions(n_heads * n_freqs, pos_dim).reshape(n_heads, n_freqs, pos_dim)
-    omega_F = torch.cat((
-        torch.zeros(n_zero_freqs, device=directions_hFP.device),
-        min_freq * (max_freq / min_freq) ** torch.linspace(0, 1, n_freqs - n_zero_freqs, device=directions_hFP.device),
-    ))
+    omega_F = torch.cat(
+        (
+            torch.zeros(n_zero_freqs, device=directions_hFP.device),
+            min_freq
+            * (max_freq / min_freq)
+            ** torch.linspace(0, 1, n_freqs - n_zero_freqs, device=directions_hFP.device),
+        )
+    )
     return directions_hFP * omega_F.reshape(n_freqs, 1)
 
 
-def apply_golden_freqs_cis_to_visual_pos(freqs_hFP: torch.Tensor, pos_BSP: torch.Tensor) -> torch.Tensor:
+def apply_golden_freqs_cis_to_visual_pos(
+    freqs_hFP: torch.Tensor, pos_BSP: torch.Tensor
+) -> torch.Tensor:
     """Apply golden frequencies to visual positions."""
-    img_mask_BS = E.reduce(~torch.isnan(pos_BSP), 'b s p -> b s', reduction='all')
+    img_mask_BS = E.reduce(~torch.isnan(pos_BSP), "b s p -> b s", reduction="all")
     pos_tP = pos_BSP[img_mask_BS].float()
-    theta_thF = torch.einsum('tp,hfp->thf', pos_tP, freqs_hFP.float())
+    theta_thF = torch.einsum("tp,hfp->thf", pos_tP, freqs_hFP.float())
     return torch.polar(torch.ones_like(theta_thF.float()), theta_thF.float())
 
 
@@ -117,7 +131,7 @@ def apply_golden_rotary_emb(
     pos_BSP: torch.Tensor,
 ) -> torch.Tensor:
     """Apply golden rotary embedding to image tokens only."""
-    img_mask_BS = E.reduce(~torch.isnan(pos_BSP), 'b s p -> b s', reduction='all')
+    img_mask_BS = E.reduce(~torch.isnan(pos_BSP), "b s p -> b s", reduction="all")
     input_thd = input_BShd[img_mask_BS]
 
     input_thd = torch.view_as_complex(
@@ -126,6 +140,5 @@ def apply_golden_rotary_emb(
     output_thd = input_thd * freqs_cis_thF
     output_thd = torch.view_as_real(output_thd).flatten(-2).type_as(input_BShd)
 
-    img_mask_BS11 = E.rearrange(img_mask_BS, 'b s -> b s 1 1')
+    img_mask_BS11 = E.rearrange(img_mask_BS, "b s -> b s 1 1")
     return input_BShd.masked_scatter(img_mask_BS11, output_thd)
-

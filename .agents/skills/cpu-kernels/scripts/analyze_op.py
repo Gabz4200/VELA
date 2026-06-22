@@ -15,7 +15,7 @@ import ast
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict
 
 
 class OpAnalyzer(ast.NodeVisitor):
@@ -94,8 +94,13 @@ def analyze_from_file(filepath: Path) -> Dict:
         if "=" in line and any(
             dim in line
             for dim in [
-                "batch_size", "in_features", "out_features",
-                "hidden_size", "input_size", "seq_len", "num_heads",
+                "batch_size",
+                "in_features",
+                "out_features",
+                "hidden_size",
+                "input_size",
+                "seq_len",
+                "num_heads",
             ]
         ):
             match = re.match(r"(\w+)\s*=\s*(\d+)", line.strip())
@@ -170,7 +175,7 @@ def print_analysis(analysis: Dict):
     """Pretty print the analysis results with CPU-specific recommendations."""
 
     print(f"\n{'=' * 70}")
-    print(f"CPU Kernel Analysis")
+    print("CPU Kernel Analysis")
     print(f"{'=' * 70}\n")
 
     print(f"Kernel Type: {analysis['kernel_type'].upper()}")
@@ -184,7 +189,7 @@ def print_analysis(analysis: Dict):
 
     print("Operations:")
     if analysis["has_gemm"]:
-        print(f"  * GEMM/Linear detected")
+        print("  * GEMM/Linear detected")
     if analysis["activations"]:
         print(f"  * Activations: {', '.join(set(analysis['activations']))}")
     if analysis["reductions"]:
@@ -268,7 +273,9 @@ def print_analysis(analysis: Dict):
 def main():
     parser = argparse.ArgumentParser(description="Analyze PyTorch op for CPU kernel development")
     parser.add_argument("--op", type=str, help="Operation name (e.g., rms_norm, flash_attention)")
-    parser.add_argument("--shapes", type=str, default="", help="Shapes as MxN,MxN (e.g., 1024x4096,2048x8192)")
+    parser.add_argument(
+        "--shapes", type=str, default="", help="Shapes as MxN,MxN (e.g., 1024x4096,2048x8192)"
+    )
     parser.add_argument("--file", type=Path, help="PyTorch baseline file to analyze")
     args = parser.parse_args()
 

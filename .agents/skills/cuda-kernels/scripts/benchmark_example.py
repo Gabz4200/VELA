@@ -35,13 +35,14 @@ import torch
 import torch.nn as nn
 
 # Add kernel module to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'torch-ext'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "torch-ext"))
 
 # Import custom kernels - OPTIONAL (for benchmarking comparison)
 KERNELS_AVAILABLE = False
 rmsnorm = None
 try:
     from ltx_kernels import rmsnorm
+
     # Note: LTX-Video uses GELU (not GEGLU), so we only need rmsnorm
     KERNELS_AVAILABLE = True
 except ImportError:
@@ -50,10 +51,10 @@ except ImportError:
 from diffusers import LTXPipeline
 from diffusers.utils import export_to_video
 
-
 # =============================================================================
 # Custom Attention Processor with Optimized Kernels
 # =============================================================================
+
 
 class OptimizedLTXVideoAttnProcessor:
     """
@@ -75,16 +76,20 @@ class OptimizedLTXVideoAttnProcessor:
         attention_mask: Optional[torch.Tensor] = None,
         image_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
     ) -> torch.Tensor:
-        from diffusers.models.transformers.transformer_ltx import apply_rotary_emb
         from diffusers.models.attention_dispatch import dispatch_attention_fn
+        from diffusers.models.transformers.transformer_ltx import apply_rotary_emb
 
         batch_size, sequence_length, _ = (
             hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
         )
 
         if attention_mask is not None:
-            attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
-            attention_mask = attention_mask.view(batch_size, attn.heads, -1, attention_mask.shape[-1])
+            attention_mask = attn.prepare_attention_mask(
+                attention_mask, sequence_length, batch_size
+            )
+            attention_mask = attention_mask.view(
+                batch_size, attn.heads, -1, attention_mask.shape[-1]
+            )
 
         if encoder_hidden_states is None:
             encoder_hidden_states = hidden_states
@@ -117,8 +122,8 @@ class OptimizedLTXVideoAttnProcessor:
             attn_mask=attention_mask,
             dropout_p=0.0,
             is_causal=False,
-            backend=getattr(self, '_attention_backend', None),
-            parallel_config=getattr(self, '_parallel_config', None),
+            backend=getattr(self, "_attention_backend", None),
+            parallel_config=getattr(self, "_parallel_config", None),
         )
         hidden_states = hidden_states.flatten(2, 3)
         hidden_states = hidden_states.to(query.dtype)
@@ -143,16 +148,18 @@ def patch_rmsnorm_modules(model: nn.Module) -> int:
     for name, module in model.named_modules():
         # Check for any RMSNorm variant (torch.nn.RMSNorm or diffusers RMSNorm)
         module_class_name = type(module).__name__
-        if module_class_name == 'RMSNorm':
-            eps = getattr(module, 'eps', 1e-6)
-            has_weight = hasattr(module, 'weight') and module.weight is not None
+        if module_class_name == "RMSNorm":
+            eps = getattr(module, "eps", 1e-6)
+            has_weight = hasattr(module, "weight") and module.weight is not None
 
             if has_weight:
                 # Module has learnable weight
                 def make_patched_forward_with_weight(mod, epsilon):
                     def patched_forward(x):
                         return rmsnorm(x, mod.weight, eps=epsilon)
+
                     return patched_forward
+
                 module.forward = make_patched_forward_with_weight(module, eps)
             else:
                 # No weight (elementwise_affine=False) - use ones
@@ -161,7 +168,9 @@ def patch_rmsnorm_modules(model: nn.Module) -> int:
                         # Create weight of ones on the same device/dtype as input
                         weight = torch.ones(x.shape[-1], device=x.device, dtype=x.dtype)
                         return rmsnorm(x, weight, eps=epsilon)
+
                     return patched_forward
+
                 module.forward = make_patched_forward_no_weight(eps)
 
             patched_count += 1
@@ -184,11 +193,11 @@ def inject_optimized_kernels(pipe) -> dict:
     Returns a dict with counts of patched modules.
     """
     stats = {
-        'attention_processors': 0,
-        'rmsnorm_modules': 0,
+        "attention_processors": 0,
+        "rmsnorm_modules": 0,
     }
 
-    if not hasattr(pipe, 'transformer'):
+    if not hasattr(pipe, "transformer"):
         print("  WARNING: Pipeline has no 'transformer' attribute!")
         return stats
 
@@ -197,14 +206,14 @@ def inject_optimized_kernels(pipe) -> dict:
     # 1. Replace attention processors with optimized version
     # This handles norm_q and norm_k in attention modules
     for name, module in transformer.named_modules():
-        if hasattr(module, 'set_processor') and hasattr(module, 'processor'):
+        if hasattr(module, "set_processor") and hasattr(module, "processor"):
             module.set_processor(OptimizedLTXVideoAttnProcessor())
-            stats['attention_processors'] += 1
+            stats["attention_processors"] += 1
             # Debug: uncomment to see which processors are replaced
             # print(f"  Replaced processor: {name}")
 
     # 2. Patch RMSNorm modules (norm1, norm2 in transformer blocks)
-    stats['rmsnorm_modules'] = patch_rmsnorm_modules(transformer)
+    stats["rmsnorm_modules"] = patch_rmsnorm_modules(transformer)
 
     return stats
 
@@ -289,7 +298,7 @@ def generate_dog_video(
         print("Custom kernels: DISABLED (baseline)")
 
     # Modify output path to include kernel and compile suffix
-    base_path = output_path.rsplit('.', 1)
+    base_path = output_path.rsplit(".", 1)
     kernel_suffix = "_optimized" if use_optimized_kernels else "_baseline"
     compile_suffix = "_compile" if use_compile else ""
     full_suffix = f"{kernel_suffix}{compile_suffix}"
@@ -341,7 +350,7 @@ def generate_dog_video(
     if num_warmup_iterations > 0:
         print(f"\nRunning {num_warmup_iterations} warmup iteration(s)...")
         for i in range(num_warmup_iterations):
-            print(f"  Warmup iteration {i+1}/{num_warmup_iterations}...")
+            print(f"  Warmup iteration {i + 1}/{num_warmup_iterations}...")
             _ = pipe(
                 prompt=prompt,
                 negative_prompt=negative_prompt,
@@ -382,31 +391,33 @@ def generate_dog_video(
     print("\n" + "=" * 60)
     print("BENCHMARK RESULTS")
     print("=" * 60)
-    print(f"Configuration: {'OPTIMIZED KERNELS' if use_optimized_kernels else 'BASELINE (NO KERNELS)'}")
-    print(f"\nLatency:")
+    print(
+        f"Configuration: {'OPTIMIZED KERNELS' if use_optimized_kernels else 'BASELINE (NO KERNELS)'}"
+    )
+    print("\nLatency:")
     print(f"  Total generation time: {gen_time:.2f}s")
-    print(f"  Time per frame: {gen_time/num_frames:.3f}s")
-    print(f"  Time per step: {gen_time/num_inference_steps:.3f}s")
-    print(f"\nMemory:")
+    print(f"  Time per frame: {gen_time / num_frames:.3f}s")
+    print(f"  Time per step: {gen_time / num_inference_steps:.3f}s")
+    print("\nMemory:")
     print(f"  Peak memory allocated: {peak_memory:.2f} GB")
     print(f"  Memory before generation: {memory_before:.2f} GB")
     print(f"  Memory after generation: {memory_after:.2f} GB")
     print("=" * 60)
 
     # Save video(s)
-    print(f"\nSaving video(s)...")
+    print("\nSaving video(s)...")
     if batch_size == 1:
         # Single video - save with the original output path
         export_to_video(output.frames[0], output_path, fps=24)
         print(f"  Video saved to: {output_path}")
 
         # Also save as GIF for easy viewing
-        gif_path = output_path.replace('.mp4', '.gif')
+        gif_path = output_path.replace(".mp4", ".gif")
         export_to_video(output.frames[0], gif_path, fps=12)
         print(f"  GIF saved to: {gif_path}")
     else:
         # Multiple videos - save each with index
-        base_path = output_path.rsplit('.', 1)
+        base_path = output_path.rsplit(".", 1)
         for i, frames in enumerate(output.frames):
             if len(base_path) == 2:
                 video_path = f"{base_path[0]}_{i}.{base_path[1]}"
@@ -417,18 +428,18 @@ def generate_dog_video(
 
             export_to_video(frames, video_path, fps=24)
             export_to_video(frames, gif_path, fps=12)
-            print(f"  Video {i+1}/{batch_size} saved to: {video_path}")
+            print(f"  Video {i + 1}/{batch_size} saved to: {video_path}")
     print("All videos saved successfully")
 
     return {
-        'output_path': output_path,
-        'generation_time': gen_time,
-        'peak_memory_gb': peak_memory,
-        'time_per_frame': gen_time/num_frames,
-        'time_per_step': gen_time/num_inference_steps,
-        'use_optimized_kernels': use_optimized_kernels,
-        'use_compile': use_compile,
-        'batch_size': batch_size,
+        "output_path": output_path,
+        "generation_time": gen_time,
+        "peak_memory_gb": peak_memory,
+        "time_per_frame": gen_time / num_frames,
+        "time_per_step": gen_time / num_inference_steps,
+        "use_optimized_kernels": use_optimized_kernels,
+        "use_compile": use_compile,
+        "batch_size": batch_size,
     }
 
 
@@ -443,13 +454,13 @@ def main():
         "--use-optimized-kernels",
         action="store_true",
         default=False,
-        help="Use custom H100 CUDA kernels (requires building kernels first)"
+        help="Use custom H100 CUDA kernels (requires building kernels first)",
     )
     kernel_group.add_argument(
         "--no-optimized-kernels",
         action="store_true",
         default=False,
-        help="Use baseline implementation without custom kernels"
+        help="Use baseline implementation without custom kernels",
     )
 
     # Generation parameters
@@ -460,73 +471,58 @@ def main():
 The woman with brown hair wears a black jacket and has a small, barely noticeable mole on her right cheek.
 The camera angle is a close-up, focused on the woman with brown hair's face. The lighting is warm and
 natural, likely from the setting sun, casting a soft glow on the scene. The scene appears to be real-life footage""",
-        help="Text prompt describing the video to generate"
+        help="Text prompt describing the video to generate",
     )
     parser.add_argument(
         "--negative-prompt",
         type=str,
         default="worst quality, inconsistent motion, blurry, jittery, distorted",
-        help="Things to avoid in generation"
+        help="Things to avoid in generation",
     )
     parser.add_argument(
-        "--num-frames",
-        type=int,
-        default=161,
-        help="Number of frames to generate (default: 161)"
+        "--num-frames", type=int, default=161, help="Number of frames to generate (default: 161)"
     )
     parser.add_argument(
-        "--height",
-        type=int,
-        default=512,
-        help="Video height in pixels (default: 512)"
+        "--height", type=int, default=512, help="Video height in pixels (default: 512)"
     )
     parser.add_argument(
-        "--width",
-        type=int,
-        default=768,
-        help="Video width in pixels (default: 768)"
+        "--width", type=int, default=768, help="Video width in pixels (default: 768)"
     )
     parser.add_argument(
-        "--steps",
-        type=int,
-        default=50,
-        help="Number of denoising steps (default: 50)"
+        "--steps", type=int, default=50, help="Number of denoising steps (default: 50)"
     )
     parser.add_argument(
         "--guidance-scale",
         type=float,
         default=4.5,
-        help="Classifier-free guidance scale (default: 4.5)"
+        help="Classifier-free guidance scale (default: 4.5)",
     )
     parser.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-        help="Random seed for reproducibility (default: 42)"
+        "--seed", type=int, default=42, help="Random seed for reproducibility (default: 42)"
     )
     parser.add_argument(
         "--output",
         type=str,
         default="dog_video.mp4",
-        help="Output video path (default: dog_video.mp4, will add _optimized or _baseline suffix)"
+        help="Output video path (default: dog_video.mp4, will add _optimized or _baseline suffix)",
     )
     parser.add_argument(
         "--warmup-iterations",
         type=int,
         default=2,
-        help="Number of warmup iterations before benchmark run (default: 1)"
+        help="Number of warmup iterations before benchmark run (default: 1)",
     )
     parser.add_argument(
         "--compile",
         action="store_true",
         default=False,
-        help="Use torch.compile on transformer blocks (fullgraph=True)"
+        help="Use torch.compile on transformer blocks (fullgraph=True)",
     )
     parser.add_argument(
         "--batch-size",
         type=int,
         default=1,
-        help="Number of videos to generate per prompt (default: 1)"
+        help="Number of videos to generate per prompt (default: 1)",
     )
 
     args = parser.parse_args()
@@ -556,7 +552,7 @@ natural, likely from the setting sun, casting a soft glow on the scene. The scen
         batch_size=args.batch_size,
     )
 
-    print(f"\nBenchmark completed successfully!")
+    print("\nBenchmark completed successfully!")
     print(f"Results: {results}")
 
 

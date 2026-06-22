@@ -8,23 +8,25 @@ forward/backward passes on CPU, and verifies:
   - C++ CPU kernel is dispatched when available
 """
 
+import math
 import os
+import warnings
+from argparse import Namespace
+
+import pytest
+import torch
 
 os.environ["RWKV_JIT_ON"] = "0"
 os.environ["RWKV_HEAD_SIZE_A"] = "64"
 os.environ["RWKV_CTXLEN"] = "128"
 
-import warnings
-
 # Upstream deprecations we can't fix (deepspeed → torch.utils.mkldnn, pynvml)
 warnings.filterwarnings("ignore", message=".*torch.jit.script_method.*")
 warnings.filterwarnings("ignore", message=".*pynvml.*")
 
-import torch
-import pytest
-import math
-
-WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "..", "dummy_data/VisualRWKV-v0700-0B1-v1.0-20250109.pth")
+WEIGHTS_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "dummy_data/VisualRWKV-v0700-0B1-v1.0-20250109.pth"
+)
 
 # Architecture derived from the checkpoint
 N_LAYER = 12
@@ -34,7 +36,6 @@ HEAD_SIZE = 64
 CTX_LEN = 128
 
 
-from argparse import Namespace
 
 def build_args():
     a = Namespace()
@@ -61,11 +62,24 @@ def load_rwkv_weights(model, path):
     """Load RWKV backbone from a checkpoint whose keys are prefixed 'rwkv.*'."""
     sd = torch.load(path, map_location="cpu", weights_only=True)
     rwkv_sd = {k[5:]: v for k, v in sd.items() if k.startswith("rwkv.")}
+    from Vela7.src.utils import convert_rwkv7_to_vela7_moe
+
+    rwkv_sd = convert_rwkv7_to_vela7_moe(rwkv_sd)
     missing, unexpected = model.load_state_dict(rwkv_sd, strict=False)
-    # Allow only blocks.0.att.v* (block 0 has no value-residual LoRA) and our new res_proj/res_norm parameters
+    # Allow only blocks.0.att.v* (block 0 has no value-residual LoRA), our new res_proj/res_norm parameters, and new mHC parameters
     unexpected = [
-        k for k in missing
-        if not (k.startswith("blocks.0.att.v") or "res_proj" in k or "res_norm" in k)
+        k
+        for k in missing
+        if not (
+            k.startswith("blocks.0.att.v")
+            or "res_proj" in k
+            or "res_norm" in k
+            or "phi_" in k
+            or "alpha_" in k
+            or "b_pre_" in k
+            or "b_post_" in k
+            or "b_res_" in k
+        )
     ]
     assert not unexpected, f"Unexpected missing keys: {unexpected}"
     # Convert to bfloat16 to match checkpoint dtype and satisfy kernel assertion
@@ -88,12 +102,14 @@ def model():
 
 # ── helpers ──────────────────────────────────────────────────────────────
 
+
 def embed(model, input_ids):
     """RWKV.forward expects pre-embedded input (embedding happens in VELA)."""
     return model.emb(input_ids)
 
 
 # ── tests ────────────────────────────────────────────────────────────────
+
 
 def test_vision_encoder():
     """Verify that the VELA vision encoder (SigLino) successfully encodes an image."""
@@ -113,7 +129,7 @@ def test_vision_encoder():
     # Patchified input: (B=1, N=1, L=256, C*p^2=768)
     # 256 patches from a 16x16 grid, each patch = 16*16*3 = 768 raw pixel values
     B, N, L_patches = 1, 1, 256
-    patch_dim = vit_cfg.channel_size * vit_cfg.spatial_patch_size ** 2  # 3*16*16=768
+    patch_dim = vit_cfg.channel_size * vit_cfg.spatial_patch_size**2  # 3*16*16=768
     images = torch.rand(B, N, L_patches, patch_dim, dtype=torch.float32)
     spatial_shapes = torch.tensor([[16, 16]], dtype=torch.long)  # (B*N, 2)
 
@@ -140,12 +156,9 @@ def test_cpp_kernel():
     from Vela7.src.model import HAS_CPP_EXT, WindBackstepping
 
     assert HAS_CPP_EXT, (
-        "C++ extension not loaded — this CPU should support it. "
-        "Check compilation logs above."
+        "C++ extension not loaded — this CPU should support it. Check compilation logs above."
     )
-    assert hasattr(torch.ops, "wind_backstepping"), (
-        "torch.ops.wind_backstepping not registered"
-    )
+    assert hasattr(torch.ops, "wind_backstepping"), "torch.ops.wind_backstepping not registered"
     B, T, H, C = 2, 16, 4, 64
     torch.manual_seed(42)
     w = torch.randn(B, T, H, C, dtype=torch.bfloat16) * 0.3
@@ -175,9 +188,7 @@ def test_forward_stability(model):
     assert not torch.isinf(out).any(), "Inf in output"
     assert out.shape == (B, T, VOCAB_SIZE), f"Shape mismatch: {out.shape}"
     assert out.std().item() > 0, "Output is dead (zero variance)"
-    assert out.abs().max().item() < 100, (
-        f"Output exploding (max|·|={out.abs().max().item():.1f})"
-    )
+    assert out.abs().max().item() < 100, f"Output exploding (max|·|={out.abs().max().item():.1f})"
     print(
         f"  Output: μ={out.mean().item():.4f} σ={out.std().item():.4f} "
         f"max|·|={out.abs().max().item():.4f}"
@@ -203,9 +214,11 @@ def test_hidden_state_drift(model):
         norms.append(x.norm(dim=-1).mean().item())
 
     finite = [n for n in norms if not math.isnan(n)]
-    print(f"  Layer norms: min={min(finite):.4f} max={max(finite):.4f} "
-          f"ratio={max(finite)/max(min(finite),1e-8):.2f} "
-          f"NaN layers={len(norms)-len(finite)}/{len(norms)}")
+    print(
+        f"  Layer norms: min={min(finite):.4f} max={max(finite):.4f} "
+        f"ratio={max(finite) / max(min(finite), 1e-8):.2f} "
+        f"NaN layers={len(norms) - len(finite)}/{len(norms)}"
+    )
     # Cross-version weight load may produce local NaN; the forward/backward
     # stability tests verify the model produces sane outputs and gradients.
 
@@ -234,8 +247,7 @@ def test_backward_stability(model):
     assert total_inf == 0, f"{total_inf} params have Inf gradients"
 
     nonzero = sum(
-        1 for p in model.parameters()
-        if p.grad is not None and p.grad.abs().sum().item() > 0
+        1 for p in model.parameters() if p.grad is not None and p.grad.abs().sum().item() > 0
     )
     assert nonzero > 0, "All gradients are zero — no gradient flow"
     print(f"  Params with non-zero gradient: {nonzero}")
@@ -244,6 +256,7 @@ def test_backward_stability(model):
 def test_cpu_quantization():
     """Verify that CPU weight-only quantization can be applied via torchao."""
     from Vela7.src.siglino import load_siglino_from_hub
+
     # Load dense-30M with CPU quantization enabled
     model, _ = load_siglino_from_hub(
         repo_id="tiiuae/siglino-30M",

@@ -147,7 +147,10 @@ def cmd_result(args):
     state = _load_state(kernel_name)
 
     if trial_id not in state["trials"]:
-        print(f"Error: Trial '{trial_id}' not found. Available: {list(state['trials'].keys())}", file=sys.stderr)
+        print(
+            f"Error: Trial '{trial_id}' not found. Available: {list(state['trials'].keys())}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     trial = state["trials"][trial_id]

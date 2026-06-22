@@ -14,22 +14,18 @@
 
 import json
 import logging
-import math
 import os
 import sys
 from dataclasses import dataclass, field
-from typing import Any
 
+import monai
 import numpy as np
 import torch
 import torch.nn.functional as F
+import trackio
+import transformers
 from datasets import load_dataset
 from torch.utils.data import Dataset
-
-import monai
-import trackio
-
-import transformers
 from transformers import (
     HfArgumentParser,
     Trainer,
@@ -46,6 +42,7 @@ check_min_version("4.57.0.dev0")
 # Dataset wrapper
 # ---------------------------------------------------------------------------
 
+
 class SAMSegmentationDataset(Dataset):
     """Wraps a HF dataset into the format expected by SAM/SAM2 processors.
 
@@ -54,9 +51,17 @@ class SAMSegmentationDataset(Dataset):
     dedicated ``bbox`` / ``point`` columns.
     """
 
-    def __init__(self, dataset, processor, prompt_type: str,
-                 image_col: str, mask_col: str, prompt_col: str | None,
-                 bbox_col: str | None, point_col: str | None):
+    def __init__(
+        self,
+        dataset,
+        processor,
+        prompt_type: str,
+        image_col: str,
+        mask_col: str,
+        prompt_col: str | None,
+        bbox_col: str | None,
+        point_col: str | None,
+    ):
         self.dataset = dataset
         self.processor = processor
         self.prompt_type = prompt_type
@@ -157,6 +162,7 @@ def compute_loss(outputs, labels, num_items_in_batch=None):
 # CLI arguments
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class DataTrainingArguments:
     dataset_name: str = field(
@@ -169,7 +175,9 @@ class DataTrainingArguments:
     )
     train_val_split: float | None = field(
         default=0.1,
-        metadata={"help": "Fraction to split off for validation (used when no validation split exists)."},
+        metadata={
+            "help": "Fraction to split off for validation (used when no validation split exists)."
+        },
     )
     max_train_samples: int | None = field(
         default=None,
@@ -193,11 +201,15 @@ class DataTrainingArguments:
     )
     bbox_column_name: str | None = field(
         default=None,
-        metadata={"help": "Column with bbox prompt ([x0,y0,x1,y1]). Used when prompt_column_name is unset."},
+        metadata={
+            "help": "Column with bbox prompt ([x0,y0,x1,y1]). Used when prompt_column_name is unset."
+        },
     )
     point_column_name: str | None = field(
         default=None,
-        metadata={"help": "Column with point prompt ([x,y] or [[x,y],...]). Used when prompt_column_name is unset."},
+        metadata={
+            "help": "Column with point prompt ([x,y] or [[x,y],...]). Used when prompt_column_name is unset."
+        },
     )
     prompt_type: str = field(
         default="bbox",
@@ -229,6 +241,7 @@ class ModelArguments:
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
     parser.set_defaults(per_device_train_batch_size=4, num_train_epochs=30)
@@ -240,6 +253,7 @@ def main():
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
     from huggingface_hub import login
+
     hf_token = os.environ.get("HF_TOKEN") or os.environ.get("hfjob")
     if hf_token:
         login(token=hf_token)
@@ -278,7 +292,9 @@ def main():
         if len(dataset.keys()) == 1:
             only_split = list(dataset.keys())[0]
             dataset[only_split] = dataset[only_split].shuffle(seed=training_args.seed)
-            dataset = dataset[only_split].train_test_split(test_size=data_args.train_val_split or 0.1)
+            dataset = dataset[only_split].train_test_split(
+                test_size=data_args.train_val_split or 0.1
+            )
             dataset = {"train": dataset["train"], "validation": dataset["test"]}
         else:
             raise ValueError(f"No 'train' split found. Available: {list(dataset.keys())}")
@@ -305,11 +321,13 @@ def main():
     is_sam2 = "sam2" in model_id
 
     if is_sam2:
-        from transformers import Sam2Processor, Sam2Model
+        from transformers import Sam2Model, Sam2Processor
+
         processor = Sam2Processor.from_pretrained(model_args.model_name_or_path)
         model = Sam2Model.from_pretrained(model_args.model_name_or_path)
     else:
-        from transformers import SamProcessor, SamModel
+        from transformers import SamModel, SamProcessor
+
         processor = SamProcessor.from_pretrained(model_args.model_name_or_path)
         model = SamModel.from_pretrained(model_args.model_name_or_path)
 

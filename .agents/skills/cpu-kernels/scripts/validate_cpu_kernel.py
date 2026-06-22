@@ -10,7 +10,6 @@ Usage:
     python scripts/validate_cpu_kernel.py .
 """
 
-import os
 import re
 import sys
 from pathlib import Path
@@ -49,10 +48,12 @@ def validate_build_toml(kernel_dir: Path) -> List[ValidationError]:
 
     # Check for CPU backend sections
     if 'backend = "cpu"' not in content:
-        errors.append(ValidationError("ERROR", "No CPU backend sections found in build.toml", "build.toml"))
+        errors.append(
+            ValidationError("ERROR", "No CPU backend sections found in build.toml", "build.toml")
+        )
 
     # Check for include directive
-    sections = re.findall(r'\[kernel\.\w+\]', content)
+    sections = re.findall(r"\[kernel\.\w+\]", content)
     for section in sections:
         # Find the section content
         start = content.index(section)
@@ -60,11 +61,13 @@ def validate_build_toml(kernel_dir: Path) -> List[ValidationError]:
         section_content = content[start:next_section] if next_section != -1 else content[start:]
 
         if 'backend = "cpu"' in section_content and "include" not in section_content:
-            errors.append(ValidationError(
-                "WARNING",
-                f"Section {section} missing 'include' directive for header resolution",
-                "build.toml",
-            ))
+            errors.append(
+                ValidationError(
+                    "WARNING",
+                    f"Section {section} missing 'include' directive for header resolution",
+                    "build.toml",
+                )
+            )
 
     # Check AVX512 compiler flags
     if "-mavx512f" in content:
@@ -72,11 +75,13 @@ def validate_build_toml(kernel_dir: Path) -> List[ValidationError]:
         core_flags = ["-mavx512bf16", "-mavx512vl"]
         for flag in core_flags:
             if flag not in content:
-                errors.append(ValidationError(
-                    "WARNING",
-                    f"AVX512 section missing core flag: {flag}",
-                    "build.toml",
-                ))
+                errors.append(
+                    ValidationError(
+                        "WARNING",
+                        f"AVX512 section missing core flag: {flag}",
+                        "build.toml",
+                    )
+                )
         # GEMM-specific flags — only check if kernel has GEMM-like names or vbmi
         gemm_indicators = ["gemm", "gptq", "quantiz", "bnb", "bitsandbytes", "megablocks", "moe"]
         is_gemm_kernel = any(ind in content.lower() for ind in gemm_indicators)
@@ -84,22 +89,26 @@ def validate_build_toml(kernel_dir: Path) -> List[ValidationError]:
             gemm_flags = ["-mavx512dq", "-mavx512bw", "-mavx512vbmi"]
             for flag in gemm_flags:
                 if flag not in content:
-                    errors.append(ValidationError(
-                        "INFO",
-                        f"GEMM kernel may benefit from flag: {flag}",
-                        "build.toml",
-                    ))
+                    errors.append(
+                        ValidationError(
+                            "INFO",
+                            f"GEMM kernel may benefit from flag: {flag}",
+                            "build.toml",
+                        )
+                    )
         else:
             # For non-GEMM kernels, just note that dq/bw/vbmi are optional
             pass
 
     # Check for -fopenmp
     if "-mavx512f" in content and "-fopenmp" not in content:
-        errors.append(ValidationError(
-            "WARNING",
-            "AVX512 section missing -fopenmp flag",
-            "build.toml",
-        ))
+        errors.append(
+            ValidationError(
+                "WARNING",
+                "AVX512 section missing -fopenmp flag",
+                "build.toml",
+            )
+        )
 
     return errors
 
@@ -120,31 +129,41 @@ def validate_cpp_file(filepath: Path) -> List[ValidationError]:
             # Exclude comments
             stripped = line.lstrip()
             if not stripped.startswith("//") and not stripped.startswith("*"):
-                errors.append(ValidationError(
-                    "WARNING",
-                    "Using aligned load (_mm512_load_*). Prefer _mm512_loadu_* for safety.",
-                    fname, i + 1,
-                ))
+                errors.append(
+                    ValidationError(
+                        "WARNING",
+                        "Using aligned load (_mm512_load_*). Prefer _mm512_loadu_* for safety.",
+                        fname,
+                        i + 1,
+                    )
+                )
         if "_mm256_load_" in line and "_mm256_loadu_" not in line:
             stripped = line.lstrip()
             if not stripped.startswith("//") and not stripped.startswith("*"):
-                errors.append(ValidationError(
-                    "WARNING",
-                    "Using aligned load (_mm256_load_*). Prefer _mm256_loadu_* for safety.",
-                    fname, i + 1,
-                ))
+                errors.append(
+                    ValidationError(
+                        "WARNING",
+                        "Using aligned load (_mm256_load_*). Prefer _mm256_loadu_* for safety.",
+                        fname,
+                        i + 1,
+                    )
+                )
 
     # 2. Check for missing edge/tail handling in AVX512 files
     if "avx512" in fname.lower():
         has_vector_ops = "_mm512_" in source
-        has_tail = "remainder" in source.lower() or "tail" in source.lower() or "mask" in source.lower()
+        has_tail = (
+            "remainder" in source.lower() or "tail" in source.lower() or "mask" in source.lower()
+        )
         if has_vector_ops and not has_tail:
-            errors.append(ValidationError(
-                "INFO",
-                "No tail/remainder handling detected. Ensure hidden_size is always divisible by vector width, "
-                "or add masked/scalar fallback.",
-                fname,
-            ))
+            errors.append(
+                ValidationError(
+                    "INFO",
+                    "No tail/remainder handling detected. Ensure hidden_size is always divisible by vector width, "
+                    "or add masked/scalar fallback.",
+                    fname,
+                )
+            )
 
     # 3. Check for cpu_features.hpp inclusion in dispatcher (direct or via header)
     if fname.endswith("_cpu.cpp") and "avx" not in fname:
@@ -163,11 +182,13 @@ def validate_cpp_file(filepath: Path) -> List[ValidationError]:
                             has_cpu_features = True
                             break
         if not has_cpu_features:
-            errors.append(ValidationError(
-                "WARNING",
-                "Dispatcher file should include cpu_features.hpp for runtime feature detection.",
-                fname,
-            ))
+            errors.append(
+                ValidationError(
+                    "WARNING",
+                    "Dispatcher file should include cpu_features.hpp for runtime feature detection.",
+                    fname,
+                )
+            )
 
     # 4. Check for mixing intrinsics from different ISA levels
     has_avx2 = "_mm256_" in source
@@ -177,12 +198,14 @@ def validate_cpp_file(filepath: Path) -> List[ValidationError]:
         # Only warn if this is an AVX2-only file
         is_avx512_file = "avx512" in fname.lower()
         if not is_avx512_file:
-            errors.append(ValidationError(
-                "WARNING",
-                "Mixing AVX2 (_mm256_*) and AVX512 (_mm512_*) intrinsics in same file. "
-                "Each ISA tier should be in a separate translation unit.",
-                fname,
-            ))
+            errors.append(
+                ValidationError(
+                    "WARNING",
+                    "Mixing AVX2 (_mm256_*) and AVX512 (_mm512_*) intrinsics in same file. "
+                    "Each ISA tier should be in a separate translation unit.",
+                    fname,
+                )
+            )
 
     # 5. Check for proper OpenMP usage
     if "#pragma omp" in source and "#include <omp.h>" not in source:
@@ -194,11 +217,14 @@ def validate_cpp_file(filepath: Path) -> List[ValidationError]:
         if "double " in line and "epsilon" not in line.lower() and "eps" not in line.lower():
             stripped = line.lstrip()
             if not stripped.startswith("//") and not stripped.startswith("*"):
-                errors.append(ValidationError(
-                    "INFO",
-                    "double (float64) detected. Consider float/bf16 for better SIMD throughput.",
-                    fname, i + 1,
-                ))
+                errors.append(
+                    ValidationError(
+                        "INFO",
+                        "double (float64) detected. Consider float/bf16 for better SIMD throughput.",
+                        fname,
+                        i + 1,
+                    )
+                )
 
     return errors
 
@@ -210,42 +236,54 @@ def validate_torch_binding(kernel_dir: Path) -> List[ValidationError]:
     binding = kernel_dir / "torch-ext" / "torch_binding.cpp"
     if not binding.exists():
         binding = kernel_dir / "torch_binding.cpp"
-    
+
     if not binding.exists():
-        errors.append(ValidationError("ERROR", "torch_binding.cpp not found (expected at torch-ext/torch_binding.cpp)"))
+        errors.append(
+            ValidationError(
+                "ERROR", "torch_binding.cpp not found (expected at torch-ext/torch_binding.cpp)"
+            )
+        )
         return errors
 
     # Warn if not in standard location
     if binding.parent.name != "torch-ext":
-        errors.append(ValidationError(
-            "WARNING",
-            "torch_binding.cpp should be in torch-ext/ directory (torch-ext/torch_binding.cpp)",
-            str(binding.relative_to(kernel_dir)),
-        ))
+        errors.append(
+            ValidationError(
+                "WARNING",
+                "torch_binding.cpp should be in torch-ext/ directory (torch-ext/torch_binding.cpp)",
+                str(binding.relative_to(kernel_dir)),
+            )
+        )
 
     with open(binding) as f:
         source = f.read()
 
     if "registration.h" not in source:
-        errors.append(ValidationError(
-            "ERROR",
-            "torch_binding.cpp should include registration.h",
-            "torch_binding.cpp",
-        ))
+        errors.append(
+            ValidationError(
+                "ERROR",
+                "torch_binding.cpp should include registration.h",
+                "torch_binding.cpp",
+            )
+        )
 
     if "TORCH_LIBRARY_EXPAND" not in source:
-        errors.append(ValidationError(
-            "ERROR",
-            "torch_binding.cpp should use TORCH_LIBRARY_EXPAND macro for op registration",
-            "torch_binding.cpp",
-        ))
+        errors.append(
+            ValidationError(
+                "ERROR",
+                "torch_binding.cpp should use TORCH_LIBRARY_EXPAND macro for op registration",
+                "torch_binding.cpp",
+            )
+        )
 
     if "REGISTER_EXTENSION" not in source:
-        errors.append(ValidationError(
-            "WARNING",
-            "torch_binding.cpp should use REGISTER_EXTENSION macro",
-            "torch_binding.cpp",
-        ))
+        errors.append(
+            ValidationError(
+                "WARNING",
+                "torch_binding.cpp should use REGISTER_EXTENSION macro",
+                "torch_binding.cpp",
+            )
+        )
 
     return errors
 
@@ -258,27 +296,33 @@ def validate_kernel_structure(kernel_dir: Path) -> List[ValidationError]:
     cpu_dirs = [d for d in kernel_dir.iterdir() if d.is_dir() and "cpu" in d.name.lower()]
 
     if not cpu_dirs:
-        errors.append(ValidationError(
-            "WARNING",
-            "No *_cpu/ subdirectory found. CPU kernel code should be in <kernel>_cpu/.",
-        ))
+        errors.append(
+            ValidationError(
+                "WARNING",
+                "No *_cpu/ subdirectory found. CPU kernel code should be in <kernel>_cpu/.",
+            )
+        )
         return errors
 
     for cpu_dir in cpu_dirs:
         # Check for cpu_features.hpp
         if not (cpu_dir / "cpu_features.hpp").exists():
-            errors.append(ValidationError(
-                "ERROR",
-                f"Missing cpu_features.hpp in {cpu_dir.name}/",
-            ))
+            errors.append(
+                ValidationError(
+                    "ERROR",
+                    f"Missing cpu_features.hpp in {cpu_dir.name}/",
+                )
+            )
 
         # Check for at least one AVX512 implementation
         avx512_files = list(cpu_dir.glob("*avx512*"))
         if not avx512_files:
-            errors.append(ValidationError(
-                "WARNING",
-                f"No AVX512 implementation found in {cpu_dir.name}/",
-            ))
+            errors.append(
+                ValidationError(
+                    "WARNING",
+                    f"No AVX512 implementation found in {cpu_dir.name}/",
+                )
+            )
 
     return errors
 
@@ -335,7 +379,7 @@ def print_results(errors: List[ValidationError], kernel_dir: Path) -> int:
         print(f"Status: PASSED with warnings ({len(warning_list)} warnings)")
         return 0
     else:
-        print(f"Status: PASSED")
+        print("Status: PASSED")
         return 0
 
 

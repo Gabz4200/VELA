@@ -7,14 +7,16 @@ Compares:
 2. PyTorch baseline implementation
 """
 
-import torch
-import time
-from typing import Tuple
+import os
 
 # Import custom kernel
 import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'torch-ext'))
+import time
+from typing import Tuple
+
+import torch
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "torch-ext"))
 from ltx_kernels import rmsnorm
 
 
@@ -25,11 +27,7 @@ def pytorch_rmsnorm(x: torch.Tensor, weight: torch.Tensor, eps: float = 1e-6) ->
 
 
 def benchmark_kernel(
-    func,
-    args,
-    warmup: int = 10,
-    iterations: int = 100,
-    name: str = "kernel"
+    func, args, warmup: int = 10, iterations: int = 100, name: str = "kernel"
 ) -> Tuple[float, float]:
     """Benchmark a kernel function."""
     # Warmup
@@ -64,13 +62,13 @@ def run_benchmark():
     # LTX-Video hidden_size is typically 2048 or 3072
     configs = [
         # (batch_size, seq_len, hidden_size)
-        (1, 1024, 2048),    # Small
-        (2, 1024, 2048),    # Medium
-        (4, 1024, 2048),    # Larger batch
-        (1, 4096, 2048),    # Longer sequence
-        (2, 4096, 3072),    # LTX-Video typical
-        (1, 8192, 2048),    # Very long sequence
-        (4, 4096, 3072),    # Large workload
+        (1, 1024, 2048),  # Small
+        (2, 1024, 2048),  # Medium
+        (4, 1024, 2048),  # Larger batch
+        (1, 4096, 2048),  # Longer sequence
+        (2, 4096, 3072),  # LTX-Video typical
+        (1, 8192, 2048),  # Very long sequence
+        (4, 4096, 3072),  # Large workload
     ]
 
     dtype = torch.bfloat16  # LTX-Video uses bfloat16
@@ -88,14 +86,12 @@ def run_benchmark():
 
         # Benchmark custom kernel
         custom_avg, custom_min = benchmark_kernel(
-            rmsnorm, (x, weight, 1e-6),
-            warmup=20, iterations=100, name="custom"
+            rmsnorm, (x, weight, 1e-6), warmup=20, iterations=100, name="custom"
         )
 
         # Benchmark PyTorch baseline
         pytorch_avg, pytorch_min = benchmark_kernel(
-            pytorch_rmsnorm, (x, weight, 1e-6),
-            warmup=20, iterations=100, name="pytorch"
+            pytorch_rmsnorm, (x, weight, 1e-6), warmup=20, iterations=100, name="pytorch"
         )
 
         # Calculate speedup

@@ -26,12 +26,10 @@ from typing import Any
 import albumentations as A
 import numpy as np
 import torch
+import trackio
+import transformers
 from datasets import load_dataset
 from torchmetrics.detection.mean_ap import MeanAveragePrecision
-
-import trackio
-
-import transformers
 from transformers import (
     AutoConfig,
     AutoImageProcessor,
@@ -46,13 +44,14 @@ from transformers.trainer import EvalPrediction
 from transformers.utils import check_min_version
 from transformers.utils.versions import require_version
 
-
 logger = logging.getLogger(__name__)
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.57.0.dev0")
 
-require_version("datasets>=2.0.0", "To fix: pip install -r examples/pytorch/object-detection/requirements.txt")
+require_version(
+    "datasets>=2.0.0", "To fix: pip install -r examples/pytorch/object-detection/requirements.txt"
+)
 
 
 @dataclass
@@ -96,7 +95,9 @@ def format_image_annotations_as_coco(
     }
 
 
-def detect_bbox_format_from_samples(dataset, image_col="image", objects_col="objects", num_samples=50):
+def detect_bbox_format_from_samples(
+    dataset, image_col="image", objects_col="objects", num_samples=50
+):
     """
     Detect whether bboxes are xyxy (Pascal VOC) or xywh (COCO) by checking
     bbox coordinates against image dimensions. The correct format interpretation
@@ -205,7 +206,9 @@ def sanitize_dataset(dataset, bbox_format="xywh", image_col="image", objects_col
     dataset = dataset.filter(lambda ex: len(ex[objects_col]["bbox"]) > 0)
     after = len(dataset)
     if before != after:
-        logger.warning(f"Dropped {before - after}/{before} images with no valid bboxes after sanitization")
+        logger.warning(
+            f"Dropped {before - after}/{before} images with no valid bboxes after sanitization"
+        )
     logger.info(f"Bbox sanitization complete: {after} images with valid bboxes remain")
     return dataset
 
@@ -224,7 +227,6 @@ def convert_bbox_yolo_to_pascal(boxes: torch.Tensor, image_size: tuple[int, int]
     """
     # convert center to corners format
     boxes = center_to_corners_format(boxes)
-
 
     if isinstance(image_size, torch.Tensor):
         image_size = image_size.tolist()
@@ -340,7 +342,9 @@ def compute_metrics(
     # model produce boxes in YOLO format, then image_processor convert them to Pascal VOC format
     for batch, target_sizes in zip(predictions, image_sizes):
         batch_logits, batch_boxes = batch[1], batch[2]
-        output = ModelOutput(logits=torch.tensor(batch_logits), pred_boxes=torch.tensor(batch_boxes))
+        output = ModelOutput(
+            logits=torch.tensor(batch_logits), pred_boxes=torch.tensor(batch_boxes)
+        )
         post_processed_output = image_processor.post_process_object_detection(
             output, threshold=threshold, target_sizes=target_sizes
         )
@@ -385,14 +389,19 @@ class DataTrainingArguments:
         },
     )
     dataset_config_name: str | None = field(
-        default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
+        default=None,
+        metadata={
+            "help": "The configuration name of the dataset to use (via the datasets library)."
+        },
     )
     train_val_split: float | None = field(
         default=0.15, metadata={"help": "Percent to split off of train for validation."}
     )
     image_square_size: int | None = field(
         default=600,
-        metadata={"help": "Image longest size will be resized to this value, then image will be padded to square."},
+        metadata={
+            "help": "Image longest size will be resized to this value, then image will be padded to square."
+        },
     )
     max_train_samples: int | None = field(
         default=None,
@@ -414,7 +423,9 @@ class DataTrainingArguments:
     )
     use_fast: bool | None = field(
         default=True,
-        metadata={"help": "Use a fast torchvision-base image processor if it is supported for a given model."},
+        metadata={
+            "help": "Use a fast torchvision-base image processor if it is supported for a given model."
+        },
     )
 
 
@@ -426,19 +437,27 @@ class ModelArguments:
 
     model_name_or_path: str = field(
         default="facebook/detr-resnet-50",
-        metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"},
+        metadata={
+            "help": "Path to pretrained model or model identifier from huggingface.co/models"
+        },
     )
     config_name: str | None = field(
-        default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
+        default=None,
+        metadata={"help": "Pretrained config name or path if not the same as model_name"},
     )
     cache_dir: str | None = field(
-        default=None, metadata={"help": "Where do you want to store the pretrained models downloaded from s3"}
+        default=None,
+        metadata={"help": "Where do you want to store the pretrained models downloaded from s3"},
     )
     model_revision: str = field(
         default="main",
-        metadata={"help": "The specific model version to use (can be a branch name, tag name or commit id)."},
+        metadata={
+            "help": "The specific model version to use (can be a branch name, tag name or commit id)."
+        },
     )
-    image_processor_name: str = field(default=None, metadata={"help": "Name or path of preprocessor config."})
+    image_processor_name: str = field(
+        default=None, metadata={"help": "Name or path of preprocessor config."}
+    )
     ignore_mismatched_sizes: bool = field(
         default=True,
         metadata={
@@ -469,13 +488,14 @@ class ModelArguments:
 def main():
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
-
-        model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
+        model_args, data_args, training_args = parser.parse_json_file(
+            json_file=os.path.abspath(sys.argv[1])
+        )
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-
     from huggingface_hub import login
+
     hf_token = os.environ.get("HF_TOKEN") or os.environ.get("hfjob")
     if hf_token:
         login(token=hf_token)
@@ -511,12 +531,16 @@ def main():
     logger.info(f"Training/evaluation parameters {training_args}")
 
     dataset = load_dataset(
-        data_args.dataset_name, cache_dir=model_args.cache_dir, trust_remote_code=model_args.trust_remote_code
+        data_args.dataset_name,
+        cache_dir=model_args.cache_dir,
+        trust_remote_code=model_args.trust_remote_code,
     )
 
     bbox_format = detect_bbox_format_from_samples(dataset["train"])
     if bbox_format == "xyxy":
-        logger.info("Converting bboxes from xyxy (Pascal VOC) → xywh (COCO) format across all splits")
+        logger.info(
+            "Converting bboxes from xyxy (Pascal VOC) → xywh (COCO) format across all splits"
+        )
     for split_name in list(dataset.keys()):
         dataset[split_name] = sanitize_dataset(dataset[split_name], bbox_format=bbox_format)
 
@@ -530,7 +554,9 @@ def main():
 
     data_args.train_val_split = None if "validation" in dataset else data_args.train_val_split
     if isinstance(data_args.train_val_split, float) and data_args.train_val_split > 0.0:
-        split = dataset["train"].train_test_split(data_args.train_val_split, seed=training_args.seed)
+        split = dataset["train"].train_test_split(
+            data_args.train_val_split, seed=training_args.seed
+        )
         dataset["train"] = split["train"]
         dataset["validation"] = split["test"]
 
@@ -548,7 +574,9 @@ def main():
 
     if categories is None:
         # Category is a Value type (not ClassLabel) — scan dataset to discover labels
-        logger.info("Category feature is not ClassLabel — scanning dataset to discover category labels...")
+        logger.info(
+            "Category feature is not ClassLabel — scanning dataset to discover category labels..."
+        )
         unique_cats = set()
         for example in dataset["train"]:
             cats = example["objects"]["category"]
@@ -652,7 +680,9 @@ def main():
     )
 
     train_transform_batch = partial(
-        augment_and_transform_batch, transform=train_augment_and_transform, image_processor=image_processor
+        augment_and_transform_batch,
+        transform=train_augment_and_transform,
+        image_processor=image_processor,
     )
     validation_transform_batch = partial(
         augment_and_transform_batch, transform=validation_transform, image_processor=image_processor
@@ -662,7 +692,6 @@ def main():
     dataset["validation"] = dataset["validation"].with_transform(validation_transform_batch)
     if "test" in dataset:
         dataset["test"] = dataset["test"].with_transform(validation_transform_batch)
-
 
     eval_compute_metrics_fn = partial(
         compute_metrics, image_processor=image_processor, id2label=id2label, threshold=0.0

@@ -77,8 +77,14 @@ def extract_model_params(model_name: str) -> float:
     return 30.0  # reasonable default for vision models
 
 
-def estimate_training_time(model_params_m: float, dataset_size: int, epochs: int,
-                           image_size: int, batch_size: int, hardware: str) -> float:
+def estimate_training_time(
+    model_params_m: float,
+    dataset_size: int,
+    epochs: int,
+    image_size: int,
+    batch_size: int,
+    hardware: str,
+) -> float:
     """Estimate training time in hours for vision model training."""
     # Steps per epoch
     steps_per_epoch = dataset_size / batch_size
@@ -86,7 +92,6 @@ def estimate_training_time(model_params_m: float, dataset_size: int, epochs: int
     base_secs_per_step = 0.8
     model_factor = (model_params_m / 30.0) ** 0.6
     image_factor = (image_size / 640.0) ** 2
-
 
     batch_factor = (batch_size / 8.0) ** 0.7
 
@@ -120,16 +125,33 @@ def estimate_training_time(model_params_m: float, dataset_size: int, epochs: int
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Estimate training cost for vision model training jobs")
-    parser.add_argument("--model", required=True,
-                        help="Model name (e.g., 'ustc-community/dfine-small-coco' or 'detr-resnet-50')")
+    parser = argparse.ArgumentParser(
+        description="Estimate training cost for vision model training jobs"
+    )
+    parser.add_argument(
+        "--model",
+        required=True,
+        help="Model name (e.g., 'ustc-community/dfine-small-coco' or 'detr-resnet-50')",
+    )
     parser.add_argument("--dataset", default=None, help="Dataset name (for known size lookup)")
-    parser.add_argument("--hardware", required=True, choices=HARDWARE_COSTS.keys(), help="Hardware flavor")
-    parser.add_argument("--dataset-size", type=int, default=None,
-                        help="Number of training images (overrides dataset lookup)")
-    parser.add_argument("--epochs", type=int, default=30, help="Number of training epochs (default: 30)")
-    parser.add_argument("--image-size", type=int, default=640, help="Image square size in pixels (default: 640)")
-    parser.add_argument("--batch-size", type=int, default=8, help="Per-device batch size (default: 8)")
+    parser.add_argument(
+        "--hardware", required=True, choices=HARDWARE_COSTS.keys(), help="Hardware flavor"
+    )
+    parser.add_argument(
+        "--dataset-size",
+        type=int,
+        default=None,
+        help="Number of training images (overrides dataset lookup)",
+    )
+    parser.add_argument(
+        "--epochs", type=int, default=30, help="Number of training epochs (default: 30)"
+    )
+    parser.add_argument(
+        "--image-size", type=int, default=640, help="Image square size in pixels (default: 640)"
+    )
+    parser.add_argument(
+        "--batch-size", type=int, default=8, help="Per-device batch size (default: 8)"
+    )
     return parser.parse_args()
 
 
@@ -145,7 +167,7 @@ def main():
         dataset_size = KNOWN_DATASETS[args.dataset]
     elif args.dataset:
         print(f"Unknown dataset '{args.dataset}', defaulting to 1000 images.")
-        print(f"Use --dataset-size to specify the exact count.")
+        print("Use --dataset-size to specify the exact count.")
         dataset_size = 1000
     else:
         dataset_size = 1000
@@ -184,13 +206,13 @@ def main():
 
     timeout_str = f"{recommended_timeout:.0f}h"
     timeout_secs = int(recommended_timeout * 3600)
-    print(f"Example job configuration (MCP tool):")
+    print("Example job configuration (MCP tool):")
     print(f"""
 hf_jobs("uv", {{
     "script": "scripts/object_detection_training.py",
     "script_args": [
         "--model_name_or_path", "{args.model}",
-        "--dataset_name", "{args.dataset or 'your-dataset'}",
+        "--dataset_name", "{args.dataset or "your-dataset"}",
         "--image_square_size", "{args.image_size}",
         "--num_train_epochs", "{args.epochs}",
         "--per_device_train_batch_size", "{args.batch_size}",
@@ -201,7 +223,7 @@ hf_jobs("uv", {{
     "secrets": {{"HF_TOKEN": "$HF_TOKEN"}}
 }})
 """)
-    print(f"Example job configuration (Python API):")
+    print("Example job configuration (Python API):")
     print(f"""
 api.run_uv_job(
     script="scripts/object_detection_training.py",

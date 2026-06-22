@@ -1,33 +1,40 @@
 # Utilities for Falcon Vision
 # Model loading and image preprocessing without tokenizer dependency
 
+from typing import Union
+
 import torch
-import torch.nn.functional as F
-from torch import nn
-import numpy as np
-from PIL import Image
-from typing import Union, List
-import os
 
-from .model import SigLino
-from .configs import SigLinoArgs, siglino_configs
+from .configs import siglino_configs
 from .image_processor import SigLinoImageProcessor
+from .model import SigLino
 
 
-
-def _quantize_model_if_needed(model: SigLino, quantize: bool, device: Union[str, torch.device]) -> SigLino:
+def _quantize_model_if_needed(
+    model: SigLino, quantize: bool, device: Union[str, torch.device]
+) -> SigLino:
     if not quantize:
         return model
     dev_str = str(device)
     try:
         from torchao.quantization import quantize_
+
         if "cuda" in dev_str:
             from torchao.quantization import Int4WeightOnlyConfig
+
             print("Quantizing model to CUDA int4 with torchao...")
-            quantize_(model, Int4WeightOnlyConfig(group_size=32, int4_packing_format="tile_packed_to_4d", int4_choose_qparams_algorithm="hqq"))  # type: ignore[arg-type]
+            quantize_(
+                model,
+                Int4WeightOnlyConfig(
+                    group_size=32,
+                    int4_packing_format="tile_packed_to_4d",
+                    int4_choose_qparams_algorithm="hqq",
+                ),
+            )  # type: ignore[arg-type]
             print("Model quantized to CUDA int4 successfully.")
         else:
             from torchao.quantization import Int8WeightOnlyConfig
+
             print("Quantizing model to CPU int8 with torchao...")
             quantize_(model, Int8WeightOnlyConfig())
             print("Model quantized to CPU int8 successfully.")
@@ -46,13 +53,13 @@ def load_siglino_model(
 ) -> tuple[SigLino, SigLinoImageProcessor]:
     """
     Load a SigLino model from a checkpoint.
-    
+
     Args:
         checkpoint_path: Path to the model checkpoint
         config_name: Name of the model configuration
         device: Device to load the model on
         dtype: Optional dtype to cast model weights to (e.g. torch.bfloat16)
-    
+
     Returns:
         Tuple of (model, image_processor)
     """
@@ -60,28 +67,29 @@ def load_siglino_model(
     if config_name in siglino_configs:
         args = siglino_configs[config_name]
     else:
-        raise ValueError(f"Unknown config: {config_name}. Available: {list(siglino_configs.keys())}")
-    
+        raise ValueError(
+            f"Unknown config: {config_name}. Available: {list(siglino_configs.keys())}"
+        )
+
     # Create model
     model = SigLino(args)
-    
+
     # Standard PyTorch checkpoint
     state_dict = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
 
-        
     model.load_state_dict(state_dict)
-    
+
     if dtype is None:
         model = model.to(device=device)
     else:
         model = model.to(device=device, dtype=dtype)
     model.eval()
-    
+
     model = _quantize_model_if_needed(model, quantize, device)
-    
+
     # Create image processor
     image_processor = SigLinoImageProcessor(patch_size=args.spatial_patch_size, **kwargs)
-    
+
     return model, image_processor
 
 
@@ -92,7 +100,7 @@ def load_siglino_model(
 # ):
 #     """
 #     Convert a torchtitan checkpoint to standalone format.
-#     
+#
 #     This handles the key mapping differences between the torchtitan
 #     DistillPerceptionTransformerMultiTeacher and FalconVisionEncoder.
 #     """
@@ -102,7 +110,7 @@ def load_siglino_model(
 #         config = omni_falcon_perception_configs[config_name]
 #         config.max_seq_len = 2048
 #         config.seq_len = 2304 + 5
-#         config.vocab_size = 65536 
+#         config.vocab_size = 65536
 #         config.eos_id = 31999
 #         config.dtype = torch.bfloat16
 #         config.use_grouped_mm = False
@@ -139,7 +147,7 @@ def load_siglino_model(
 #         config.jitter_rope = False
 #         config.use_phis = False
 #         config.use_pixel_head = True
-# 
+#
 #         # Load model
 #         model = DistillPerceptionTransformerMultiTeacher(config).to("cuda")
 #         state_dict = model.state_dict()
@@ -156,13 +164,13 @@ def load_siglino_model(
 #                 state_dict.pop(k, None)
 #             if "rope_upsampler" in k:
 #                 state_dict.pop(k, None)
-#         
+#
 #         dcp_load(state_dict, checkpoint_id=torchtitan_ckpt_path)
 #     else:
 #         state_dict = torch.load(torchtitan_ckpt_path, map_location="cpu", weights_only=False)
 #         if "model" in state_dict:
 #             state_dict = state_dict["model"]
-#     
+#
 #     # Key mapping from torchtitan to standalone
 #     key_map = {
 #         "tok_embeddings": None,  # Remove text embeddings
@@ -177,7 +185,7 @@ def load_siglino_model(
 #         "phis_statistics": None,  # Remove PHIs statistics
 #         "rope_upsampler": None,  # Remove RoPE upsampler
 #     }
-#     
+#
 #     new_state_dict = {}
 #     for k, v in state_dict.items():
 #         # Skip keys that should be removed
@@ -188,12 +196,12 @@ def load_siglino_model(
 #                 break
 #         if skip:
 #             continue
-#         
+#
 #         # Remove "model." prefix if present
 #         new_key = k[6:] if k.startswith("model.") else k
 #         print(new_key)
 #         new_state_dict[new_key] = v
-#     
+#
 #     # Save converted checkpoint
 #     torch.save(new_state_dict, output_path)
 #     print(f"Saved converted checkpoint to {output_path}")
@@ -269,9 +277,7 @@ def load_siglino_from_hub(
 
     model = _quantize_model_if_needed(model, quantize, device)
 
-    image_processor = SigLinoImageProcessor(
-        patch_size=args.spatial_patch_size, **processor_kwargs
-    )
+    image_processor = SigLinoImageProcessor(patch_size=args.spatial_patch_size, **processor_kwargs)
     return model, image_processor
 
 
@@ -279,11 +285,11 @@ def _load_safetensors(path: str) -> dict:
     """Load a safetensors file into a plain state-dict."""
     try:
         from safetensors.torch import load_file
+
         return load_file(path, device="cpu")
     except ImportError:
         raise ImportError(
-            "Install 'safetensors' to load .safetensors checkpoints: "
-            "pip install safetensors"
+            "Install 'safetensors' to load .safetensors checkpoints: pip install safetensors"
         )
 
 
@@ -295,5 +301,3 @@ FEATURE_DIM_DICT = {
 }
 
 PATCH_SIZE = 16
-
-

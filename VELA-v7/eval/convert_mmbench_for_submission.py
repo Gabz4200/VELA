@@ -1,8 +1,10 @@
-import os
-import json
 import argparse
-import pandas as pd
+import json
+import os
 from pathlib import Path
+
+import pandas as pd
+
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -13,6 +15,7 @@ def get_args():
 
     return parser.parse_args()
 
+
 if __name__ == "__main__":
     args = get_args()
     upload_dir = Path(args.upload_dir)
@@ -20,10 +23,10 @@ if __name__ == "__main__":
     df = pd.read_table(args.annotation_file)
 
     cur_df = df.copy()
-    cur_df = cur_df.drop(columns=['hint', 'category', 'source', 'image', 'comment', 'l2-category'])
-    cur_df.insert(6, 'prediction', None)
-    for pred in open(os.path.join(args.result_dir, args.experiment, 'merge.jsonl')):
+    cur_df = cur_df.drop(columns=["hint", "category", "source", "image", "comment", "l2-category"])
+    cur_df.insert(6, "prediction", None)
+    for pred in open(os.path.join(args.result_dir, args.experiment, "merge.jsonl")):
         pred = json.loads(pred)
-        cur_df.loc[df['index'] == pred['question_id'], 'prediction'] = pred['text']
+        cur_df.loc[df["index"] == pred["question_id"], "prediction"] = pred["text"]
 
-    cur_df.to_excel(upload_dir / f"{args.experiment}.xlsx", index=False, engine='openpyxl')
+    cur_df.to_excel(upload_dir / f"{args.experiment}.xlsx", index=False, engine="openpyxl")

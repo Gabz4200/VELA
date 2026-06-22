@@ -1,49 +1,56 @@
 import os
-os.environ["RWKV_JIT_ON"] = '1'
-os.environ["RWKV_CUDA_ON"] = '1' # if '1' then use CUDA kernel for seq mode (much faster)
-# make sure cuda dir is in the same level as modeling_rwkv.py
-from modeling_rwkv import RWKV
 
-import gc
-import gradio as gr
+os.environ["RWKV_JIT_ON"] = "1"
+os.environ["RWKV_CUDA_ON"] = "1"  # if '1' then use CUDA kernel for seq mode (much faster)
+# make sure cuda dir is in the same level as modeling_rwkv.py
 import base64
+import gc
+from datetime import datetime
 from io import BytesIO
+
+import gradio as gr
 import torch
 import torch.nn.functional as F
-from datetime import datetime
-from transformers import AutoImageProcessor
 from huggingface_hub import hf_hub_download
-from pynvml import *
+from modeling_rwkv import RWKV
+from pynvml import nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo, nvmlInit
+from transformers import AutoImageProcessor
+
 nvmlInit()
 gpu_h = nvmlDeviceGetHandleByIndex(0)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 ctx_limit = 3500
-title = 'VELA-v5'
+title = "VELA-v5"
 rwkv_remote_path = "rwkv1b5-vitl336p14-577token_mix665k_rwkv.pth"
 vision_remote_path = "rwkv1b5-vitl336p14-577token_mix665k_visual.pth"
-vision_tower_dir = 'openai/clip-vit-large-patch14-336'
+vision_tower_dir = "openai/clip-vit-large-patch14-336"
 
 model_path = hf_hub_download(repo_id="howard-hou/vela-5", filename=rwkv_remote_path)
-model = RWKV(model=model_path, strategy='cuda fp16')
-from rwkv.utils import PIPELINE, PIPELINE_ARGS
+model = RWKV(model=model_path, strategy="cuda fp16")
+from rwkv.utils import PIPELINE, PIPELINE_ARGS  # noqa: E402
+
 pipeline = PIPELINE(model, "rwkv_vocab_v20230424")
 
 ##########################################################################
-from modeling_vision import VisionEncoder, VisionEncoderConfig
-config = VisionEncoderConfig(n_embd=model.args.n_embd, 
-                             vision_tower_dir=vision_tower_dir, 
-                             grid_size=-1)
+from modeling_vision import VisionEncoder, VisionEncoderConfig  # noqa: E402
+
+config = VisionEncoderConfig(
+    n_embd=model.args.n_embd, vision_tower_dir=vision_tower_dir, grid_size=-1
+)
 visual_encoder = VisionEncoder(config)
 vision_local_path = hf_hub_download(repo_id="howard-hou/vela-5", filename=vision_remote_path)
-vision_state_dict = torch.load(vision_local_path, map_location='cpu')
+vision_state_dict = torch.load(vision_local_path, map_location="cpu")
 visual_encoder.load_state_dict(vision_state_dict, strict=False)
 image_processor = AutoImageProcessor.from_pretrained(vision_tower_dir)
 visual_encoder = visual_encoder.to(device)
+
+
 ##########################################################################
 def generate_prompt(instruction):
-    instruction = instruction.strip().replace('\r\n','\n').replace('\n\n','\n')
+    instruction = instruction.strip().replace("\r\n", "\n").replace("\n\n", "\n")
     return f"\n{instruction}\n\nAssistant:"
+
 
 def generate(
     ctx,
@@ -51,18 +58,21 @@ def generate(
     token_count=200,
     temperature=0.2,
     top_p=0.3,
-    presencePenalty = 0.0,
-    countPenalty = 1.0,
+    presencePenalty=0.0,
+    countPenalty=1.0,
 ):
-    args = PIPELINE_ARGS(temperature = max(0.2, float(temperature)), top_p = float(top_p),
-                    alpha_frequency = countPenalty,
-                    alpha_presence = presencePenalty,
-                    token_ban = [], # ban the generation of some tokens
-                    token_stop = [0, 261]) # stop generation whenever you see any token here
+    args = PIPELINE_ARGS(
+        temperature=max(0.2, float(temperature)),
+        top_p=float(top_p),
+        alpha_frequency=countPenalty,
+        alpha_presence=presencePenalty,
+        token_ban=[],  # ban the generation of some tokens
+        token_stop=[0, 261],
+    )  # stop generation whenever you see any token here
     ctx = ctx.strip()
     all_tokens = []
     out_last = 0
-    out_str = ''
+    out_str = ""
     occurrence = {}
     out, state, token = None, None, None
     for i in range(int(token_count)):
@@ -73,28 +83,28 @@ def generate(
             input_ids = [token]
             out, state = model.forward(tokens=input_ids, state=state)
         for n in occurrence:
-            out[n] -= (args.alpha_presence + occurrence[n] * args.alpha_frequency)
+            out[n] -= args.alpha_presence + occurrence[n] * args.alpha_frequency
 
         token = pipeline.sample_logits(out, temperature=args.temperature, top_p=args.top_p)
         if token in args.token_stop:
             break
         all_tokens += [token]
         for xxx in occurrence:
-            occurrence[xxx] *= 0.996        
+            occurrence[xxx] *= 0.996
         if token not in occurrence:
             occurrence[token] = 1
         else:
             occurrence[token] += 1
-        
+
         tmp = pipeline.decode(all_tokens[out_last:])
-        if '\ufffd' not in tmp:
+        if "\ufffd" not in tmp:
             out_str += tmp
             yield out_str.strip()
             out_last = i + 1
 
     gpu_info = nvmlDeviceGetMemoryInfo(gpu_h)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f'{timestamp} - vram {gpu_info.total} used {gpu_info.used} free {gpu_info.free}')
+    print(f"{timestamp} - vram {gpu_info.total} used {gpu_info.used} free {gpu_info.free}")
     del out
     del state
     gc.collect()
@@ -105,10 +115,7 @@ def generate(
 ##########################################################################
 cur_dir = os.path.dirname(os.path.abspath(__file__))
 examples = [
-    [
-        f"{cur_dir}/examples_pizza.jpg",
-        "What are steps to cook it?"
-    ],
+    [f"{cur_dir}/examples_pizza.jpg", "What are steps to cook it?"],
     [
         f"{cur_dir}/examples_bluejay.jpg",
         "what is the name of this bird?",
@@ -128,28 +135,31 @@ def pil_image_to_base64(pil_image):
     buffered = BytesIO()
     pil_image.save(buffered, format="JPEG")  # You can change the format as needed (JPEG, PNG, etc.)
     # Encodes the image data into base64 format as a bytes object
-    base64_image = base64.b64encode(buffered.getvalue()).decode('utf-8')
+    base64_image = base64.b64encode(buffered.getvalue()).decode("utf-8")
     return base64_image
 
+
 image_cache = {}
-ln0_weight = model.w['blocks.0.ln0.weight'].to(torch.float32).to(device)
-ln0_bias = model.w['blocks.0.ln0.bias'].to(torch.float32).to(device)
+ln0_weight = model.w["blocks.0.ln0.weight"].to(torch.float32).to(device)
+ln0_bias = model.w["blocks.0.ln0.bias"].to(torch.float32).to(device)
+
+
 def compute_image_state(image):
     base64_image = pil_image_to_base64(image)
     if base64_image in image_cache:
         image_state = image_cache[base64_image]
     else:
-        image = image_processor(images=image.convert('RGB'), return_tensors='pt')['pixel_values']
+        image = image_processor(images=image.convert("RGB"), return_tensors="pt")["pixel_values"]
         image = image.to(device)
-        image_features = visual_encoder.encode_images(image.unsqueeze(0)).squeeze(0) # [L, D]
+        image_features = visual_encoder.encode_images(image.unsqueeze(0)).squeeze(0)  # [L, D]
         # apply layer norm to image feature, very important
-        image_features = F.layer_norm(image_features, 
-                                    (image_features.shape[-1],), 
-                                    weight=ln0_weight, 
-                                    bias=ln0_bias)
+        image_features = F.layer_norm(
+            image_features, (image_features.shape[-1],), weight=ln0_weight, bias=ln0_bias
+        )
         _, image_state = model.forward(embs=image_features, state=None)
         image_cache[base64_image] = image_state
     return image_state
+
 
 def chatbot(image, question):
     if image is None:
@@ -160,19 +170,23 @@ def chatbot(image, question):
     for output in generate(input_text, image_state):
         yield output
 
+
 with gr.Blocks(title=title) as demo:
     with gr.Row():
         with gr.Column():
-            image = gr.Image(type='pil', label="Image")
+            image = gr.Image(type="pil", label="Image")
         with gr.Column():
-            prompt = gr.Textbox(lines=8, label="Prompt", 
-                value="Render a clear and concise summary of the photo.")
+            prompt = gr.Textbox(
+                lines=8, label="Prompt", value="Render a clear and concise summary of the photo."
+            )
             with gr.Row():
                 submit = gr.Button("Submit", variant="primary")
-                clear = gr.Button("Clear", variant="secondary") 
+                clear = gr.Button("Clear", variant="secondary")
         with gr.Column():
             output = gr.Textbox(label="Output", lines=10)
-    data = gr.Dataset(components=[image, prompt], samples=examples, label="Examples", headers=["Image", "Prompt"])
+    data = gr.Dataset(
+        components=[image, prompt], samples=examples, label="Examples", headers=["Image", "Prompt"]
+    )
     submit.click(chatbot, [image, prompt], [output])
     clear.click(lambda: None, [], [output])
     data.click(lambda x: x, [data], [image, prompt])

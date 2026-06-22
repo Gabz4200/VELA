@@ -28,10 +28,10 @@ sys.path.insert(0, "torch-ext")
 
 from ltx_kernels import rmsnorm
 
-
 # =============================================================================
 # Step 1: RMSNorm Module Patcher
 # =============================================================================
+
 
 def patch_rmsnorm_modules(model: nn.Module) -> int:
     """
@@ -47,20 +47,23 @@ def patch_rmsnorm_modules(model: nn.Module) -> int:
         class_name = type(module).__name__
 
         # Match all RMSNorm variants (LlamaRMSNorm, MistralRMSNorm, etc.)
-        if 'RMSNorm' in class_name:
+        if "RMSNorm" in class_name:
             # Get epsilon - LLaMA uses 'variance_epsilon', others use 'eps'
-            eps = getattr(module, 'variance_epsilon', None)
+            eps = getattr(module, "variance_epsilon", None)
             if eps is None:
-                eps = getattr(module, 'eps', 1e-6)
+                eps = getattr(module, "eps", 1e-6)
 
             # Transformers RMSNorm always has weight
-            has_weight = hasattr(module, 'weight') and module.weight is not None
+            has_weight = hasattr(module, "weight") and module.weight is not None
 
             if has_weight:
+
                 def make_patched_forward(mod, epsilon):
                     def patched_forward(hidden_states):
                         return rmsnorm(hidden_states, mod.weight, eps=epsilon)
+
                     return patched_forward
+
                 module.forward = make_patched_forward(module, eps)
                 patched_count += 1
             else:
@@ -73,16 +76,17 @@ def patch_rmsnorm_modules(model: nn.Module) -> int:
 # Step 2: Kernel Injection Function
 # =============================================================================
 
+
 def inject_optimized_kernels(model) -> dict:
     """
     Inject custom CUDA kernels into a transformers model.
 
     Call this AFTER loading model to CUDA.
     """
-    stats = {'rmsnorm_modules': 0}
+    stats = {"rmsnorm_modules": 0}
 
     # Patch RMSNorm modules
-    stats['rmsnorm_modules'] = patch_rmsnorm_modules(model)
+    stats["rmsnorm_modules"] = patch_rmsnorm_modules(model)
 
     return stats
 
@@ -90,6 +94,7 @@ def inject_optimized_kernels(model) -> dict:
 # =============================================================================
 # Step 3: Main - Demonstrate the Pattern
 # =============================================================================
+
 
 def main():
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -105,14 +110,12 @@ def main():
     # Load model
     print(f"\n1. Loading model: {model_id}...")
     model = AutoModelForCausalLM.from_pretrained(
-        model_id,
-        torch_dtype=torch.bfloat16,
-        device_map="cuda"
+        model_id, torch_dtype=torch.bfloat16, device_map="cuda"
     )
     tokenizer = AutoTokenizer.from_pretrained(model_id)
 
     # Count RMSNorm modules before patching
-    rmsnorm_count = sum(1 for _, m in model.named_modules() if 'RMSNorm' in type(m).__name__)
+    rmsnorm_count = sum(1 for _, m in model.named_modules() if "RMSNorm" in type(m).__name__)
     print(f"   Found {rmsnorm_count} RMSNorm modules")
 
     # Inject kernels
@@ -122,9 +125,9 @@ def main():
 
     # Verify injection worked
     print("\n3. Verifying injection...")
-    x = torch.randn(1, 10, model.config.hidden_size, device='cuda', dtype=torch.bfloat16)
+    x = torch.randn(1, 10, model.config.hidden_size, device="cuda", dtype=torch.bfloat16)
     for name, module in model.named_modules():
-        if 'RMSNorm' in type(module).__name__:
+        if "RMSNorm" in type(module).__name__:
             out = module(x)
             print(f"   RMSNorm forward pass: {x.shape} -> {out.shape}")
             break
@@ -146,7 +149,7 @@ def main():
             **inputs,
             max_new_tokens=num_tokens,
             do_sample=False,
-            pad_token_id=tokenizer.eos_token_id
+            pad_token_id=tokenizer.eos_token_id,
         )
     end_time = time.perf_counter()
 

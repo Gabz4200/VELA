@@ -50,7 +50,7 @@ def _run_experts_for_loop(
     act: str = "silu",
 ) -> torch.Tensor:
     num_tokens_list = num_tokens_per_expert.to(torch.int32).tolist()
-    total_tokens = sum(num_tokens_list)    
+    total_tokens = sum(num_tokens_list)
     num_padding = x.shape[0] - total_tokens
     x_splits = torch.split(x[:total_tokens], split_size_or_sections=num_tokens_list, dim=0)
     out_splits = []
@@ -62,7 +62,7 @@ def _run_experts_for_loop(
         h = h * torch.matmul(x_expert, w3[expert_idx].T)
         h = torch.matmul(h, w2[expert_idx].T)
         out_splits.append(h)
-    
+
     out = torch.cat(out_splits, dim=0)
     if num_padding > 0:
         out = torch.vstack((out, out.new_zeros((num_padding, out.shape[-1]))))
@@ -156,13 +156,17 @@ class MoE(nn.Module):
             route_scale=moe_args.route_scale,
         )
         self.shared_experts = (
-            FeedForward(dim=dim, hidden_dim=hidden_dim * moe_args.num_shared_experts, activation=moe_args.activation)
+            FeedForward(
+                dim=dim,
+                hidden_dim=hidden_dim * moe_args.num_shared_experts,
+                activation=moe_args.activation,
+            )
             if moe_args.num_shared_experts > 0
             else None
         )
         self.score_before_experts = moe_args.score_before_experts
         self.top_k = moe_args.top_k
-        
+
         # Register buffer for load balancing (matches torchtitan checkpoint)
         self.register_buffer(
             "expert_bias",
@@ -174,7 +178,9 @@ class MoE(nn.Module):
         bs, slen, dim = x.shape
         x = x.view(-1, dim)
 
-        top_scores, selected_experts_indices, num_tokens_per_expert = self.router(x, expert_bias=self.expert_bias)
+        top_scores, selected_experts_indices, num_tokens_per_expert = self.router(
+            x, expert_bias=self.expert_bias
+        )
 
         # Reorder tokens by expert
         token_indices_sorted = torch.argsort(selected_experts_indices.view(-1), stable=True)
@@ -194,10 +200,9 @@ class MoE(nn.Module):
         else:
             out = torch.zeros_like(x)
 
-        routed_output = (
-            routed_output.to(torch.float32)
-            * top_scores_sorted.view(-1, 1)
-        ).to(x.dtype)
+        routed_output = (routed_output.to(torch.float32) * top_scores_sorted.view(-1, 1)).to(
+            x.dtype
+        )
 
         out = out.scatter_add(dim=0, index=token_indices_expanded, src=routed_output)
         return out.view(bs, slen, dim)
@@ -207,4 +212,3 @@ class MoE(nn.Module):
         self.router.init_weights(init_std)
         if self.shared_experts is not None:
             self.shared_experts.init_weights(init_std)
-

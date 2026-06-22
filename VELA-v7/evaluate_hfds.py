@@ -1,59 +1,62 @@
 import os
+
 os.environ["RWKV_JIT_ON"] = "1"
 
-import json
-from PIL import Image
-import pandas as pd
-import numpy as np
-import math
 import argparse
-import torch
+import json
 from pathlib import Path
-from tqdm import tqdm
-from collections import defaultdict
+
+import numpy as np
+import torch
 from datasets import load_from_disk
-from Vela7.tokenizer.rwkv_tokenizer import TRIE_TOKENIZER
-from Vela7.src.dataset import DEFAULT_IMAGE_TOKEN, DEFAULT_STOP_TOKEN, STOP_TOKEN_INDEX
-from Vela7.src.dataset import process_image_tokens_in_conversations, preprocess
-from Vela7.src.utils import Conversation
+from tqdm import tqdm
 from transformers import AutoImageProcessor
 
+from Vela7.src.dataset import (
+    DEFAULT_STOP_TOKEN,
+    STOP_TOKEN_INDEX,
+    preprocess,
+    process_image_tokens_in_conversations,
+)
+from Vela7.src.utils import Conversation
+from Vela7.tokenizer.rwkv_tokenizer import TRIE_TOKENIZER
 
-    
+
 def get_input_image_tensor(image_list, image_processor):
     crop_size = image_processor.size
     from Vela7.src.utils import image_to_regions
+
     all_regions = []
     for image in image_list:
         image = image.convert("RGB")
-        regions = image_to_regions(image, (crop_size['width'], crop_size['height']))
+        regions = image_to_regions(image, (crop_size["width"], crop_size["height"]))
         all_regions.extend(regions)
     if len(all_regions) == 0:
         return None, 0
-    images = image_processor.preprocess(all_regions, return_tensors='pt')['pixel_values']
+    images = image_processor.preprocess(all_regions, return_tensors="pt")["pixel_values"]
     return images.unsqueeze(0), len(all_regions)
 
 
 def prepare_conversations(line):
     if "question" in line:
-        input_text = line['question']
+        input_text = line["question"]
 
-        conv = Conversation(id=line['sample_id'], roles=["human", "gpt"], conversations=[])
+        conv = Conversation(id=line["sample_id"], roles=["human", "gpt"], conversations=[])
         conv.append_message(conv.roles[0], input_text)
         conv.append_message(conv.roles[1], "")
 
         conversations = conv.conversations
     elif "conversations" in line:
-        conv = Conversation(id=line['sample_id'], roles=["human", "gpt"], conversations=[])
+        conv = Conversation(id=line["sample_id"], roles=["human", "gpt"], conversations=[])
         for msg in line["conversations"]:
-            if msg['from'] == "human":
-                conv.append_message(conv.roles[0], msg['value'])
-            elif msg['from'] == "gpt":
-                conv.append_message(conv.roles[1], msg['value'])
+            if msg["from"] == "human":
+                conv.append_message(conv.roles[0], msg["value"])
+            elif msg["from"] == "gpt":
+                conv.append_message(conv.roles[1], msg["value"])
             else:
                 raise ValueError(f"Unknown role {msg['from']}")
         # if last message is from human, add an empty message from gpt
-        if msg['from'] == "human":
+        if msg["from"] == "human":
             conv.append_message(conv.roles[1], "")
         conversations = conv.conversations
     else:
@@ -63,12 +66,14 @@ def prepare_conversations(line):
 
 def eval_model(args):
     from Vela7.src.model import VELA
+
     model_path = Path(args.model_path)
-    exp_name = model_path.parent.name
     model_name = model_path.stem
-    if getattr(args, 'vision_tower_path', None) is None:
-        if getattr(args, 'vision_tower_dir', None) is not None:
-            args.vision_tower_path = str(Path(args.vision_tower_dir) / "timm/ViT-SO400M-14-SigLIP-384")
+    if getattr(args, "vision_tower_path", None) is None:
+        if getattr(args, "vision_tower_dir", None) is not None:
+            args.vision_tower_path = str(
+                Path(args.vision_tower_dir) / "timm/ViT-SO400M-14-SigLIP-384"
+            )
         else:
             args.vision_tower_path = "google/siglip-so400m-patch14-384"
     # Model
@@ -92,8 +97,8 @@ def eval_model(args):
     pbar = tqdm(total=len(dataset))
     update_every = len(dataset) // 100 if len(dataset) >= 100 else 1
     for i, line in enumerate(dataset):
-        idx = line['sample_id']
-        image_keys = [k for k in line.keys() if 'image' in k]
+        idx = line["sample_id"]
+        image_keys = [k for k in line.keys() if "image" in k]
         image_list = [line[k] for k in image_keys if line[k] is not None]
         images, num_regions = get_input_image_tensor(image_list, image_processor)
         if images is not None:
@@ -101,7 +106,9 @@ def eval_model(args):
 
         conversations = prepare_conversations(line)
         if images is not None:
-            conversations = process_image_tokens_in_conversations(conversations, num_regions=num_regions)
+            conversations = process_image_tokens_in_conversations(
+                conversations, num_regions=num_regions
+            )
 
         data_dict = preprocess(
             conversations,
@@ -110,10 +117,11 @@ def eval_model(args):
             ctx_len=args.ctx_len,
             num_token_per_image=args.num_token_per_image,
             pad_token_id=0,
-            do_pad_to_max_length=False)
-        
-        input_ids = data_dict['input_ids'].unsqueeze(0).to(args.device)
-        cur_prompt = data_dict['input_text']
+            do_pad_to_max_length=False,
+        )
+
+        input_ids = data_dict["input_ids"].unsqueeze(0).to(args.device)
+        cur_prompt = data_dict["input_text"]
         if i == 0:
             print("input_ids.shape: ", input_ids.shape)
             print("input_ids: ", input_ids)
@@ -130,7 +138,8 @@ def eval_model(args):
                 temperature=None,
                 top_p=None,
                 max_new_tokens=args.max_new_tokens,
-                stop_token_idx=STOP_TOKEN_INDEX)
+                stop_token_idx=STOP_TOKEN_INDEX,
+            )
 
         output = tokenizer.decode(output_ids).split(DEFAULT_STOP_TOKEN)[0].strip()
         # avg logit
@@ -138,17 +147,22 @@ def eval_model(args):
         # geometric mean of probs
         avg_prob = np.prod(output_probs) ** (1.0 / len(output_probs))
 
-        out_str = json.dumps({"question_id": idx,
-                              "prompt": cur_prompt,
-                              "text": output,
-                              "avg_logit": str(round(avg_logit, 3)),
-                              "avg_prob": str(round(avg_prob, 3)),
-                              "model_id": model_name,
-                              "metadata": {
-                                  "sub_task": line.get("sub_task", None),
-                                  "question_type": line.get("question_type", None),
-                                  "answer": line.get("answer", None),
-                              }}, ensure_ascii=False)
+        out_str = json.dumps(
+            {
+                "question_id": idx,
+                "prompt": cur_prompt,
+                "text": output,
+                "avg_logit": str(round(avg_logit, 3)),
+                "avg_prob": str(round(avg_prob, 3)),
+                "model_id": model_name,
+                "metadata": {
+                    "sub_task": line.get("sub_task", None),
+                    "question_type": line.get("question_type", None),
+                    "answer": line.get("answer", None),
+                },
+            },
+            ensure_ascii=False,
+        )
         out_file.write(out_str + "\n")
         # update progress bar
         if i % update_every == 0 and i != 0:
@@ -156,6 +170,7 @@ def eval_model(args):
         out_file.flush()
     out_file.close()
     pbar.close()
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -167,21 +182,29 @@ if __name__ == "__main__":
     parser.add_argument("--n_embd", default=2048, type=int)
     parser.add_argument("--dim_att", default=0, type=int)
     parser.add_argument("--dim_ffn", default=0, type=int)
-    parser.add_argument("--pre_ffn", default=0, type=int)  # replace first att layer by ffn (sometimes better)
+    parser.add_argument(
+        "--pre_ffn", default=0, type=int
+    )  # replace first att layer by ffn (sometimes better)
     parser.add_argument("--head_size_a", default=64, type=int)
     parser.add_argument("--head_size_divisor", default=8, type=int)
     parser.add_argument("--dropout", default=0, type=float)
-    parser.add_argument("--vision_tower_dir",type=str, help="Path to the directory containing the vision tower checkpoints")
+    parser.add_argument(
+        "--vision_tower_dir",
+        type=str,
+        help="Path to the directory containing the vision tower checkpoints",
+    )
     parser.add_argument("--vision_tower_path", type=str, default=None)
-    parser.add_argument("--grad_cp", default=0, type=int)  # gradient checkpt: saves VRAM, but slower
-    parser.add_argument("--proj_type", default='linear', type=str, choices=['linear', 'mlp'])
+    parser.add_argument(
+        "--grad_cp", default=0, type=int
+    )  # gradient checkpt: saves VRAM, but slower
+    parser.add_argument("--proj_type", default="linear", type=str, choices=["linear", "mlp"])
     parser.add_argument("--num_token_per_image", type=int, default=16)
     # arguments for evaluation
     parser.add_argument("--model_path", type=str, default=None)
     parser.add_argument("--dataset_path", type=str, default=None)
     parser.add_argument("--max_new_tokens", type=int, default=128)
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--split", type=str, default='test')
+    parser.add_argument("--split", type=str, default="test")
     args = parser.parse_args()
     #
     os.environ["RWKV_HEAD_SIZE_A"] = str(args.head_size_a)
@@ -189,6 +212,6 @@ if __name__ == "__main__":
     if args.dim_att <= 0:
         args.dim_att = args.n_embd
     if args.dim_ffn <= 0:
-        args.dim_ffn = int((args.n_embd * 3.5) // 32 * 32) # default = 3.5x emb size
+        args.dim_ffn = int((args.n_embd * 3.5) // 32 * 32)  # default = 3.5x emb size
 
     eval_model(args)

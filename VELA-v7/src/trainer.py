@@ -1,14 +1,18 @@
-import os, math, time, datetime, subprocess
-import torch
-from torch.utils.data import DataLoader
+# type: ignore
+import datetime
+import math
+import time
+
 import pytorch_lightning as pl
-from pytorch_lightning.utilities import rank_zero_info, rank_zero_only
+import torch
+
 
 def my_save(args, trainer, dd, ff):
-    if 'deepspeed_stage_3' in args.strategy:
+    if "deepspeed_stage_3" in args.strategy:
         trainer.save_checkpoint(ff, weights_only=True)
     else:
         torch.save(dd, ff)
+
 
 class train_callback(pl.Callback):
     def __init__(self, args):
@@ -19,10 +23,13 @@ class train_callback(pl.Callback):
     def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
         args = self.args
         # global_step is update step, influence by gradient accumulation
-        real_step = trainer.global_step * args.accumulate_grad_batches + args.epoch_begin * args.epoch_steps
+        real_step = (
+            trainer.global_step * args.accumulate_grad_batches + args.epoch_begin * args.epoch_steps
+        )
 
         # LR schedule, cosine with warmup
         w_step = args.warmup_steps
+        progress = 0.0
         if args.lr_final == args.lr_init or args.epoch_count == 0:
             lr = args.lr_init
         else:
@@ -32,13 +39,15 @@ class train_callback(pl.Callback):
 
             # cosine decay
             cosine_decay = max(0.0, 0.5 * (1 + math.cos(math.pi * progress)))
-            lr = args.lr_final + (args.lr_init - args.lr_final) * cosine_decay 
+            lr = args.lr_final + (args.lr_init - args.lr_final) * cosine_decay
 
         if real_step < w_step:
             lr = lr * (0.1 + 0.9 * real_step / w_step)
 
         if args.weight_decay_final > 0:
-            wd_now = args.weight_decay * math.exp(math.log(args.weight_decay_final / args.weight_decay) * progress)
+            wd_now = args.weight_decay * math.exp(
+                math.log(args.weight_decay_final / args.weight_decay) * progress
+            )
         else:
             wd_now = args.weight_decay
 
@@ -60,12 +69,13 @@ class train_callback(pl.Callback):
                 trainer.my_log.write(f"NEW RUN {args.my_timestamp}\n{vars(self.args)}\n")
                 try:
                     trainer.my_log.write(f"{trainer.strategy.config}\n")
-                except:
+                except Exception:
                     pass
                 trainer.my_log.flush()
                 if len(args.wandb) > 0:
                     print("Login to wandb...")
                     import wandb
+
                     wandb.init(
                         project=args.wandb,
                         name=args.run_name + " " + args.my_timestamp,
@@ -85,13 +95,13 @@ class train_callback(pl.Callback):
             sample_per_second = 0
             try:
                 t_cost = (t_now - trainer.my_time_ns) / 1e9
-                sample_per_second = sample_per_step / t_cost 
+                sample_per_second = sample_per_step / t_cost
                 self.log("REAL it/s", 1.0 / t_cost, prog_bar=True, on_step=True)
                 self.log("sample/s", sample_per_second, prog_bar=True, on_step=True)
-            except:
+            except Exception:
                 pass
             trainer.my_time_ns = t_now
-            if pl.__version__[0]=='2':
+            if pl.__version__[0] == "2":
                 trainer.my_loss = outputs["loss"]
             else:
                 trainer.my_loss = trainer.my_loss_all.float().mean().item()
@@ -103,15 +113,19 @@ class train_callback(pl.Callback):
             # self.log("s", real_step, prog_bar=True, on_step=True)
 
             if len(args.wandb) > 0:
-                lll = {"loss": trainer.my_loss, "lr": trainer.my_lr, "wd": trainer.my_wd, "Ksamples": real_step * sample_per_step / 1e3}
+                lll = {
+                    "loss": trainer.my_loss,
+                    "lr": trainer.my_lr,
+                    "wd": trainer.my_wd,
+                    "Ksamples": real_step * sample_per_step / 1e3,
+                }
                 if sample_per_second > 0:
                     lll["sample/s"] = sample_per_second
                 trainer.my_wandb.log(lll, step=int(real_step))
-                
 
     def on_train_epoch_start(self, trainer, pl_module):
         args = self.args
-        if pl.__version__[0]=='2':
+        if pl.__version__[0] == "2":
             dataset = trainer.train_dataloader.dataset
         else:
             dataset = trainer.train_dataloader.dataset.datasets
@@ -134,23 +148,28 @@ class train_callback(pl.Callback):
                     return True
             else:
                 return False
-    
+
         args = self.args
         to_save_dict = {}
-        if (trainer.is_global_zero) or ('deepspeed_stage_3' in args.strategy):  # save pth
-            if (args.epoch_save > 0 and get_epoch_save_condition(args, trainer)) or (trainer.current_epoch == args.epoch_count - 1):
+        if (trainer.is_global_zero) or ("deepspeed_stage_3" in args.strategy):  # save pth
+            if (args.epoch_save > 0 and get_epoch_save_condition(args, trainer)) or (
+                trainer.current_epoch == args.epoch_count - 1
+            ):
                 to_save_dict = pl_module.state_dict()
                 try:
                     my_save(
-                        args, trainer,
+                        args,
+                        trainer,
                         to_save_dict,
                         f"{args.proj_dir}/rwkv-{args.epoch_begin + trainer.current_epoch}.pth",
                     )
                 except Exception as e:
-                    print('Error\n\n', e, '\n\n')
+                    print("Error\n\n", e, "\n\n")
 
         if trainer.is_global_zero:  # logging
-            trainer.my_log.write(f"{args.epoch_begin + trainer.current_epoch} {trainer.my_epoch_loss:.6f} {math.exp(trainer.my_epoch_loss):.4f} {trainer.my_lr:.8f} {datetime.datetime.now()} {trainer.current_epoch}\n")
+            trainer.my_log.write(
+                f"{args.epoch_begin + trainer.current_epoch} {trainer.my_epoch_loss:.6f} {math.exp(trainer.my_epoch_loss):.4f} {trainer.my_lr:.8f} {datetime.datetime.now()} {trainer.current_epoch}\n"
+            )
             trainer.my_log.flush()
 
             trainer.my_loss_sum = 0

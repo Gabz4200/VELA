@@ -1,28 +1,19 @@
 # PCA visualization for Falcon Vision standalone model
 import argparse
-import os
-import sys
-import random
 import glob
+import os
+import random
+import sys
 from typing import List, Optional, Tuple
 
+import matplotlib
 import numpy as np
 from PIL import Image
-import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-
 import torch
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
 import torch._inductor.config
-torch._inductor.config.triton.unique_kernel_names = True
-torch._dynamo.config.allow_unspec_int_on_nn_module = True
-torch._inductor.config.triton.cudagraph_skip_dynamic_graphs = True
-torch._inductor.config.fx_graph_cache = True
-torch._functorch.config.enable_autograd_cache = True  # type: ignore[attr-defined]
-torch.set_float32_matmul_precision("high")
-
 from sklearn.decomposition import PCA
 
 # Resolve src/ so we can import from it regardless of CWD
@@ -30,8 +21,17 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from Vela7.src.siglino import load_siglino_from_hub
-from Vela7.src.siglino.utils import load_siglino_model  # local .pt loader
+from Vela7.src.siglino import load_siglino_from_hub  # noqa: E402
+from Vela7.src.siglino.utils import load_siglino_model  # local .pt loader  # noqa: E402
+
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+torch._inductor.config.triton.unique_kernel_names = True
+torch._dynamo.config.allow_unspec_int_on_nn_module = True
+torch._inductor.config.triton.cudagraph_skip_dynamic_graphs = True
+torch._inductor.config.fx_graph_cache = True
+torch._functorch.config.enable_autograd_cache = True  # type: ignore[attr-defined]
+torch.set_float32_matmul_precision("high")
 
 
 def load_image(path: str) -> Image.Image:
@@ -65,9 +65,9 @@ def extract_patch_features(
         spatial_shapes = processed["spatial_shapes"].to(device)
 
         H, W = spatial_shapes[0].tolist()
-        print(f"Spatial shapes: H={H}, W={W}, total_patches={H*W}")
+        print(f"Spatial shapes: H={H}, W={W}, total_patches={H * W}")
         print(f"Pixel values: {pixel_values.shape}")
-        
+
         # CPU path disables compiler tracing to flex_attention
         out = model(
             pixel_values=pixel_values,
@@ -83,17 +83,21 @@ def extract_patch_features(
         feats_dinov3 = patch_feats["dinov3"].squeeze(0)  # (L, D)
         feats_siglino = patch_feats["siglino"].squeeze(0)  # (L, D)
 
-        features_per_image.append({
-            "features_siglip": feats_siglip,
-            "features_dinov3": feats_dinov3,
-            "features_siglino": feats_siglino,
-            "grid_hw": (H, W),
-        })
+        features_per_image.append(
+            {
+                "features_siglip": feats_siglip,
+                "features_dinov3": feats_dinov3,
+                "features_siglino": feats_siglino,
+                "grid_hw": (H, W),
+            }
+        )
 
     return features_per_image
 
 
-def fit_and_project_pca(feats_2d: torch.Tensor, n_components: int = 3, whiten: bool = True) -> np.ndarray:
+def fit_and_project_pca(
+    feats_2d: torch.Tensor, n_components: int = 3, whiten: bool = True
+) -> np.ndarray:
     x = feats_2d.detach().float().cpu().numpy()
     pca = PCA(n_components=n_components, whiten=whiten)
     pca.fit(x)
@@ -188,7 +192,9 @@ def load_model_and_processor(
         )
 
     model.eval()
-    print(f"  device={model.device}  dtype={model.dtype}  n_storage_tokens={model.n_storage_tokens}")
+    print(
+        f"  device={model.device}  dtype={model.dtype}  n_storage_tokens={model.n_storage_tokens}"
+    )
     return model, processor
 
 
@@ -239,7 +245,9 @@ def process_single_image(
     feats_LD_dinov3 = info["features_dinov3"][:num_valid]
     feats_LD_siglino = info["features_siglino"][:num_valid]
 
-    print(f"Feature shapes (valid only) - siglip: {feats_LD_siglip.shape}, dinov3: {feats_LD_dinov3.shape}, siglino: {feats_LD_siglino.shape}")
+    print(
+        f"Feature shapes (valid only) - siglip: {feats_LD_siglip.shape}, dinov3: {feats_LD_dinov3.shape}, siglino: {feats_LD_siglino.shape}"
+    )
     projected_all_siglip = fit_and_project_pca(feats_LD_siglip)
     projected_all_dinov3 = fit_and_project_pca(feats_LD_dinov3)
     projected_all_siglino = fit_and_project_pca(feats_LD_siglino)
@@ -248,7 +256,9 @@ def process_single_image(
     output_filename = f"{image_basename}_pca_vis.png"
     output_path = os.path.join(output_dir, output_filename)
 
-    print(f"Projected shapes - siglino: {projected_all_siglino.shape}, siglip: {projected_all_siglip.shape}, dinov3: {projected_all_dinov3.shape}")
+    print(
+        f"Projected shapes - siglino: {projected_all_siglino.shape}, siglip: {projected_all_siglip.shape}, dinov3: {projected_all_dinov3.shape}"
+    )
     render_pca_image(
         image_rgb=image,
         projected_L3=(projected_all_siglino, projected_all_siglip, projected_all_dinov3),
@@ -262,15 +272,28 @@ def process_single_image(
 
 def main():
     parser = argparse.ArgumentParser(description="Visualize PCA of SigLino patch features")
-    parser.add_argument("--ckpt_path", type=str, default=None, help="Path to checkpoint (optional if using --hub_repo)")
-    parser.add_argument("--hub_repo", type=str, default="tiiuae/siglino-0.6B", help="HuggingFace repo id")
+    parser.add_argument(
+        "--ckpt_path",
+        type=str,
+        default=None,
+        help="Path to checkpoint (optional if using --hub_repo)",
+    )
+    parser.add_argument(
+        "--hub_repo", type=str, default="tiiuae/siglino-0.6B", help="HuggingFace repo id"
+    )
     parser.add_argument("--input_dir", type=str, required=True, help="Directory containing images")
     parser.add_argument("--output_path", type=str, required=True, help="Base output directory")
     parser.add_argument("--num_samples", type=int, default=10, help="Number of images to sample")
-    parser.add_argument("--config_name", type=str, default="siglino-0.3B", help="Config key name (e.g. siglino-30M)")
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument(
+        "--config_name", type=str, default="siglino-0.3B", help="Config key name (e.g. siglino-30M)"
+    )
+    parser.add_argument(
+        "--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu"
+    )
     parser.add_argument("--max_num_patches", type=int, default=1024)
-    parser.add_argument("--quantize", action="store_true", help="Quantize model weights to int4 using torchao")
+    parser.add_argument(
+        "--quantize", action="store_true", help="Quantize model weights to int4 using torchao"
+    )
     args = parser.parse_args()
 
     output_dir = os.path.join(args.output_path, "pca_visualizations")
@@ -285,7 +308,7 @@ def main():
         config_name=args.config_name,
         hub_repo=args.hub_repo,
         device=args.device,
-        max_pixels=(args.max_num_patches**0.5*16)**2,
+        max_pixels=(args.max_num_patches**0.5 * 16) ** 2,
         quantize=args.quantize,
     )
     print(f"Processing {len(sampled_images)} images...")

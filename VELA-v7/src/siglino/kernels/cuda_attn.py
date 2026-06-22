@@ -14,8 +14,8 @@ def cuda_flex_attn(
     q: torch.Tensor,
     k: torch.Tensor,
     v: torch.Tensor,
-    block_mask=None,        # BlockMask | None
-    compile: bool = True,   # whether to use the compiled flex_attention kernel
+    block_mask=None,  # BlockMask | None
+    compile: bool = True,  # whether to use the compiled flex_attention kernel
     return_lse: bool = False,
 ):
     """CUDA attention: flex_attention with optional sink-attention LSE output.

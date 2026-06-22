@@ -28,10 +28,10 @@ sys.path.insert(0, "torch-ext")
 
 from ltx_kernels import rmsnorm
 
-
 # =============================================================================
 # Step 1: Custom Attention Processor
 # =============================================================================
+
 
 class OptimizedLTXVideoAttnProcessor:
     """
@@ -49,12 +49,11 @@ class OptimizedLTXVideoAttnProcessor:
         image_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
     ) -> torch.Tensor:
         # Import here to avoid issues if diffusers not installed
-        from diffusers.models.transformers.transformer_ltx import apply_rotary_emb
         from diffusers.models.attention_dispatch import dispatch_attention_fn
+        from diffusers.models.transformers.transformer_ltx import apply_rotary_emb
 
         batch_size, sequence_length, _ = (
-            hidden_states.shape if encoder_hidden_states is None
-            else encoder_hidden_states.shape
+            hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
         )
 
         if attention_mask is not None:
@@ -89,7 +88,9 @@ class OptimizedLTXVideoAttnProcessor:
 
         # Dispatch attention
         hidden_states = dispatch_attention_fn(
-            query, key, value,
+            query,
+            key,
+            value,
             attn_mask=attention_mask,
             dropout_p=0.0,
             is_causal=False,
@@ -105,6 +106,7 @@ class OptimizedLTXVideoAttnProcessor:
 # Step 2: RMSNorm Module Patcher
 # =============================================================================
 
+
 def patch_rmsnorm_modules(model: nn.Module) -> int:
     """
     Patch all RMSNorm modules to use custom CUDA kernel.
@@ -117,16 +119,18 @@ def patch_rmsnorm_modules(model: nn.Module) -> int:
 
     for name, module in model.named_modules():
         # Use class name check (not isinstance) to catch diffusers RMSNorm
-        if type(module).__name__ == 'RMSNorm':
-            eps = getattr(module, 'eps', 1e-6)
-            has_weight = hasattr(module, 'weight') and module.weight is not None
+        if type(module).__name__ == "RMSNorm":
+            eps = getattr(module, "eps", 1e-6)
+            has_weight = hasattr(module, "weight") and module.weight is not None
 
             if has_weight:
                 # Module HAS learnable weight
                 def make_patched_forward_with_weight(mod, epsilon):
                     def patched_forward(x):
                         return rmsnorm(x, mod.weight, eps=epsilon)
+
                     return patched_forward
+
                 module.forward = make_patched_forward_with_weight(module, eps)
             else:
                 # Module has NO weight (elementwise_affine=False)
@@ -134,7 +138,9 @@ def patch_rmsnorm_modules(model: nn.Module) -> int:
                     def patched_forward(x):
                         weight = torch.ones(x.shape[-1], device=x.device, dtype=x.dtype)
                         return rmsnorm(x, weight, eps=epsilon)
+
                     return patched_forward
+
                 module.forward = make_patched_forward_no_weight(eps)
 
             patched_count += 1
@@ -146,15 +152,16 @@ def patch_rmsnorm_modules(model: nn.Module) -> int:
 # Step 3: Kernel Injection Function
 # =============================================================================
 
+
 def inject_optimized_kernels(pipe) -> dict:
     """
     Inject custom CUDA kernels into the LTX-Video pipeline.
 
     Call this AFTER pipe.to("cuda"), BEFORE pipe.enable_model_cpu_offload().
     """
-    stats = {'attention_processors': 0, 'rmsnorm_modules': 0}
+    stats = {"attention_processors": 0, "rmsnorm_modules": 0}
 
-    if not hasattr(pipe, 'transformer'):
+    if not hasattr(pipe, "transformer"):
         print("WARNING: Pipeline has no 'transformer' attribute!")
         return stats
 
@@ -162,12 +169,12 @@ def inject_optimized_kernels(pipe) -> dict:
 
     # Replace attention processors with optimized version
     for name, module in transformer.named_modules():
-        if hasattr(module, 'set_processor') and hasattr(module, 'processor'):
+        if hasattr(module, "set_processor") and hasattr(module, "processor"):
             module.set_processor(OptimizedLTXVideoAttnProcessor())
-            stats['attention_processors'] += 1
+            stats["attention_processors"] += 1
 
     # Patch RMSNorm modules
-    stats['rmsnorm_modules'] = patch_rmsnorm_modules(transformer)
+    stats["rmsnorm_modules"] = patch_rmsnorm_modules(transformer)
 
     return stats
 
@@ -175,6 +182,7 @@ def inject_optimized_kernels(pipe) -> dict:
 # =============================================================================
 # Step 4: Main - Demonstrate the Pattern
 # =============================================================================
+
 
 def main():
     from diffusers import LTXPipeline
@@ -201,17 +209,18 @@ def main():
     # Verify injection worked
     print("\n3. Verifying injection...")
     for name, module in pipe.transformer.named_modules():
-        if hasattr(module, 'processor'):
+        if hasattr(module, "processor"):
             processor_name = type(module.processor).__name__
-            assert processor_name == 'OptimizedLTXVideoAttnProcessor', \
+            assert processor_name == "OptimizedLTXVideoAttnProcessor", (
                 f"Expected OptimizedLTXVideoAttnProcessor, got {processor_name}"
+            )
             print(f"   ✓ Attention processor: {processor_name}")
             break
 
     # Test RMSNorm forward pass
-    x = torch.randn(1, 10, 2048, device='cuda', dtype=torch.bfloat16)
+    x = torch.randn(1, 10, 2048, device="cuda", dtype=torch.bfloat16)
     for name, module in pipe.transformer.named_modules():
-        if type(module).__name__ == 'RMSNorm':
+        if type(module).__name__ == "RMSNorm":
             out = module(x)
             print(f"   ✓ RMSNorm forward: {x.shape} -> {out.shape}")
             break

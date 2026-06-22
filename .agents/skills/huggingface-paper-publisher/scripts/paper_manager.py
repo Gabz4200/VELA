@@ -14,19 +14,19 @@ Manages paper indexing, linking, authorship, and article creation.
 """
 
 import argparse
-import os
-import sys
-import re
 import json
-from pathlib import Path
-from typing import Optional, List, Dict, Any
+import os
+import re
+import sys
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 try:
-    from huggingface_hub import HfApi, hf_hub_download, get_token
-    import yaml
     import requests
+    import yaml
     from dotenv import load_dotenv
+    from huggingface_hub import HfApi, get_token, hf_hub_download
 except ImportError as e:
     print(f"Error: Missing required dependency: {e}")
     print("Tip: run this script with `uv run scripts/paper_manager.py ...`.")
@@ -104,14 +104,14 @@ class PaperManager:
                     "exists": True,
                     "url": paper_url,
                     "arxiv_id": arxiv_id,
-                    "arxiv_url": f"https://arxiv.org/abs/{arxiv_id}"
+                    "arxiv_url": f"https://arxiv.org/abs/{arxiv_id}",
                 }
             else:
                 return {
                     "exists": False,
                     "arxiv_id": arxiv_id,
                     "index_url": paper_url,
-                    "message": f"Visit {paper_url} to index this paper"
+                    "message": f"Visit {paper_url} to index this paper",
                 }
         except requests.RequestException as e:
             return {"exists": False, "error": str(e)}
@@ -122,7 +122,7 @@ class PaperManager:
         arxiv_id: str,
         repo_type: str = "model",
         citation: Optional[str] = None,
-        create_pr: bool = False
+        create_pr: bool = False,
     ) -> Dict[str, Any]:
         """
         Link a paper to a model/dataset/space repository.
@@ -148,13 +148,10 @@ class PaperManager:
         try:
             # Download current README
             readme_path = hf_hub_download(
-                repo_id=repo_id,
-                filename="README.md",
-                repo_type=repo_type,
-                token=self.token
+                repo_id=repo_id, filename="README.md", repo_type=repo_type, token=self.token
             )
 
-            with open(readme_path, 'r', encoding='utf-8') as f:
+            with open(readme_path, "r", encoding="utf-8") as f:
                 content = f.read()
 
             # Parse or create YAML frontmatter
@@ -168,18 +165,18 @@ class PaperManager:
                 print("PR creation not yet implemented. Committing directly.")
 
             self.api.upload_file(
-                path_or_fileobj=updated_content.encode('utf-8'),
+                path_or_fileobj=updated_content.encode("utf-8"),
                 path_in_repo="README.md",
                 repo_id=repo_id,
                 repo_type=repo_type,
                 commit_message=commit_message,
-                token=self.token
+                token=self.token,
             )
 
             paper_url = f"https://huggingface.co/papers/{arxiv_id}"
             repo_url = f"https://huggingface.co/{repo_id}"
 
-            print(f"✓ Successfully linked paper to repository")
+            print("✓ Successfully linked paper to repository")
             print(f"  Paper: {paper_url}")
             print(f"  Repo: {repo_url}")
 
@@ -187,7 +184,7 @@ class PaperManager:
                 "status": "success",
                 "paper_url": paper_url,
                 "repo_url": repo_url,
-                "arxiv_id": arxiv_id
+                "arxiv_id": arxiv_id,
             }
 
         except Exception as e:
@@ -195,10 +192,7 @@ class PaperManager:
             return {"status": "error", "message": str(e)}
 
     def _add_paper_to_readme(
-        self,
-        content: str,
-        arxiv_id: str,
-        citation: Optional[str] = None
+        self, content: str, arxiv_id: str, citation: Optional[str] = None
     ) -> str:
         """
         Add paper reference to README content.
@@ -215,7 +209,7 @@ class PaperManager:
         hf_paper_url = f"https://huggingface.co/papers/{arxiv_id}"
 
         # Check if YAML frontmatter exists
-        yaml_pattern = r'^---\s*\n(.*?)\n---\s*\n'
+        yaml_pattern = r"^---\s*\n(.*?)\n---\s*\n"
         match = re.match(yaml_pattern, content, re.DOTALL)
 
         if match:
@@ -236,7 +230,7 @@ class PaperManager:
 
         # Add paper reference section with boundary markers
         paper_section = "\n<!-- paper-manager:start -->\n"
-        paper_section += f"## Paper\n\n"
+        paper_section += "## Paper\n\n"
         paper_section += f"This {'model' if 'model' in content.lower() else 'work'} is based on research presented in:\n\n"
         paper_section += f"**[View on arXiv]({arxiv_url})** | "
         paper_section += f"**[View on Hugging Face]({hf_paper_url})**\n\n"
@@ -258,7 +252,7 @@ class PaperManager:
         title: str,
         output: str,
         authors: Optional[str] = None,
-        abstract: Optional[str] = None
+        abstract: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Create a research article from template.
@@ -282,10 +276,10 @@ class PaperManager:
         if not template_file.exists():
             return {
                 "status": "error",
-                "message": f"Template '{template}' not found at {template_file}"
+                "message": f"Template '{template}' not found at {template_file}",
             }
 
-        with open(template_file, 'r', encoding='utf-8') as f:
+        with open(template_file, "r", encoding="utf-8") as f:
             template_content = f.read()
 
         # Prepare safe values for different contexts
@@ -297,12 +291,12 @@ class PaperManager:
         safe_abstract_body = self._sanitize_text(abstract_val)
 
         # Split frontmatter from body for context-aware escaping
-        fm_pattern = r'^(---\s*\n)(.*?\n)(---\s*\n)'
+        fm_pattern = r"^(---\s*\n)(.*?\n)(---\s*\n)"
         fm_match = re.match(fm_pattern, template_content, re.DOTALL)
 
         if fm_match:
             fm_open, fm_body, fm_close = fm_match.group(1), fm_match.group(2), fm_match.group(3)
-            body = template_content[fm_match.end():]
+            body = template_content[fm_match.end() :]
 
             # YAML-escape values in frontmatter
             fm_body = fm_body.replace("{{TITLE}}", self._escape_yaml_value(title))
@@ -324,16 +318,12 @@ class PaperManager:
             content = content.replace("{{ABSTRACT}}", safe_abstract_body)
 
         # Write output
-        with open(output, 'w', encoding='utf-8') as f:
+        with open(output, "w", encoding="utf-8") as f:
             f.write(content)
 
         print(f"✓ Research article created at {output}")
 
-        return {
-            "status": "success",
-            "output": output,
-            "template": template
-        }
+        return {"status": "success", "output": output, "template": template}
 
     def get_arxiv_info(self, arxiv_id: str) -> Dict[str, Any]:
         """
@@ -359,9 +349,9 @@ class PaperManager:
             content = response.text
 
             # Extract basic info with regex (proper XML parsing would be better)
-            title_match = re.search(r'<title>(.*?)</title>', content, re.DOTALL)
-            authors_matches = re.findall(r'<name>(.*?)</name>', content)
-            summary_match = re.search(r'<summary>(.*?)</summary>', content, re.DOTALL)
+            title_match = re.search(r"<title>(.*?)</title>", content, re.DOTALL)
+            authors_matches = re.findall(r"<name>(.*?)</name>", content)
+            summary_match = re.search(r"<summary>(.*?)</summary>", content, re.DOTALL)
 
             # Sanitize all text extracted from the external API
             raw_title = title_match.group(1).strip() if title_match else None
@@ -374,16 +364,12 @@ class PaperManager:
                 "authors": [self._sanitize_text(a) for a in raw_authors],
                 "abstract": self._sanitize_text(raw_abstract) if raw_abstract else None,
                 "arxiv_url": f"https://arxiv.org/abs/{arxiv_id}",
-                "pdf_url": f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+                "pdf_url": f"https://arxiv.org/pdf/{arxiv_id}.pdf",
             }
         except Exception as e:
             return {"error": str(e)}
 
-    def generate_citation(
-        self,
-        arxiv_id: str,
-        format: str = "bibtex"
-    ) -> str:
+    def generate_citation(self, arxiv_id: str, format: str = "bibtex") -> str:
         """
         Generate citation for a paper.
 
@@ -413,8 +399,8 @@ class PaperManager:
             year = f"20{year}" if int(year) < 50 else f"19{year}"
 
             # Escape BibTeX structural characters in untrusted values
-            safe_title = raw_title.replace('{', r'\{').replace('}', r'\}')
-            safe_authors = raw_authors.replace('{', r'\{').replace('}', r'\}')
+            safe_title = raw_title.replace("{", r"\{").replace("}", r"\}")
+            safe_authors = raw_authors.replace("{", r"\{").replace("}", r"\}")
 
             citation = f"""@article{{{key},
   title={{{safe_title}}},
@@ -427,8 +413,8 @@ class PaperManager:
         return f"Format '{format}' not yet implemented"
 
     # Patterns for valid arXiv IDs
-    _ARXIV_ID_MODERN = re.compile(r'^\d{4}\.\d{4,5}(v\d+)?$')
-    _ARXIV_ID_LEGACY = re.compile(r'^[a-zA-Z\-]+/\d{7}(v\d+)?$')
+    _ARXIV_ID_MODERN = re.compile(r"^\d{4}\.\d{4,5}(v\d+)?$")
+    _ARXIV_ID_LEGACY = re.compile(r"^[a-zA-Z\-]+/\d{7}(v\d+)?$")
 
     @staticmethod
     def _clean_arxiv_id(arxiv_id: str) -> str:
@@ -439,13 +425,15 @@ class PaperManager:
         """
         # Remove common prefixes and whitespace
         arxiv_id = arxiv_id.strip()
-        arxiv_id = re.sub(r'^(arxiv:|arXiv:)', '', arxiv_id, flags=re.IGNORECASE)
-        arxiv_id = re.sub(r'https?://arxiv\.org/(abs|pdf)/', '', arxiv_id)
-        arxiv_id = arxiv_id.replace('.pdf', '')
+        arxiv_id = re.sub(r"^(arxiv:|arXiv:)", "", arxiv_id, flags=re.IGNORECASE)
+        arxiv_id = re.sub(r"https?://arxiv\.org/(abs|pdf)/", "", arxiv_id)
+        arxiv_id = arxiv_id.replace(".pdf", "")
 
         # Validate format
-        if not (PaperManager._ARXIV_ID_MODERN.match(arxiv_id)
-                or PaperManager._ARXIV_ID_LEGACY.match(arxiv_id)):
+        if not (
+            PaperManager._ARXIV_ID_MODERN.match(arxiv_id)
+            or PaperManager._ARXIV_ID_LEGACY.match(arxiv_id)
+        ):
             raise ValueError(
                 f"Invalid arXiv ID: {arxiv_id!r}. "
                 "Expected format: YYMM.NNNNN[vN] or category/YYMMNNN[vN]"
@@ -460,7 +448,7 @@ class PaperManager:
         Wraps in double quotes and escapes internal quotes and backslashes
         to prevent YAML injection via crafted titles/authors.
         """
-        value = value.replace('\\', '\\\\').replace('"', '\\"')
+        value = value.replace("\\", "\\\\").replace('"', '\\"')
         return f'"{value}"'
 
     @staticmethod
@@ -471,14 +459,14 @@ class PaperManager:
         markdown code-fence breakout and YAML document delimiters.
         """
         # Remove control characters (keep newlines and tabs)
-        text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+        text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
         # Normalize whitespace runs (collapse multiple spaces/tabs, preserve single newlines)
-        text = re.sub(r'[^\S\n]+', ' ', text)
-        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = re.sub(r"[^\S\n]+", " ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
         # Neutralize markdown code fence breakout
-        text = text.replace('```', r'\`\`\`')
+        text = text.replace("```", r"\`\`\`")
         # Neutralize YAML document delimiters at line start
-        text = re.sub(r'^---', r'\\---', text, flags=re.MULTILINE)
+        text = re.sub(r"^---", r"\\---", text, flags=re.MULTILINE)
         return text.strip()
 
 
@@ -486,7 +474,7 @@ def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
         description="Paper Manager for Hugging Face Hub",
-        formatter_class=argparse.RawDescriptionHelpFormatter
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
@@ -506,7 +494,9 @@ def main():
     link_parser.add_argument("--arxiv-id", help="Single arXiv ID")
     link_parser.add_argument("--arxiv-ids", help="Comma-separated arXiv IDs")
     link_parser.add_argument("--citation", help="Full citation text")
-    link_parser.add_argument("--create-pr", action="store_true", help="Create PR instead of direct commit")
+    link_parser.add_argument(
+        "--create-pr", action="store_true", help="Create PR instead of direct commit"
+    )
 
     # Create command
     create_parser = subparsers.add_parser("create", help="Create research article")
@@ -565,7 +555,7 @@ def main():
                 arxiv_id=arxiv_id,
                 repo_type=args.repo_type,
                 citation=args.citation,
-                create_pr=args.create_pr
+                create_pr=args.create_pr,
             )
             print(json.dumps(result, indent=2))
 
@@ -575,7 +565,7 @@ def main():
             title=args.title,
             output=args.output,
             authors=args.authors,
-            abstract=args.abstract
+            abstract=args.abstract,
         )
         print(json.dumps(result, indent=2))
 

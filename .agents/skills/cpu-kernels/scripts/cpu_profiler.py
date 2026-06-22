@@ -33,7 +33,8 @@ def _find_perf_binary():
     try:
         result = subprocess.run(
             ["perf", "stat", "echo", "test"],
-            capture_output=True, timeout=10,
+            capture_output=True,
+            timeout=10,
         )
         if result.returncode == 0:
             return "perf"
@@ -46,7 +47,8 @@ def _find_perf_binary():
         try:
             result = subprocess.run(
                 [candidate, "stat", "echo", "test"],
-                capture_output=True, timeout=10,
+                capture_output=True,
+                timeout=10,
             )
             if result.returncode == 0:
                 return candidate
@@ -61,7 +63,9 @@ def _check_perf_available():
     return _find_perf_binary() is not None
 
 
-def generate_runner_script(kernel_package: str, op_path: str, warmup: int, iters: int, baseline_file: str = None) -> str:
+def generate_runner_script(
+    kernel_package: str, op_path: str, warmup: int, iters: int, baseline_file: str = None
+) -> str:
     """Generate a Python script that runs the kernel for profiling."""
     baseline_path = baseline_file or "baseline.py"
     return f"""\
@@ -100,7 +104,9 @@ for _ in range({iters}):
 """
 
 
-def run_perf_stat(kernel_package: str, op_path: str, warmup: int, iters: int, baseline_file: str = None) -> dict:
+def run_perf_stat(
+    kernel_package: str, op_path: str, warmup: int, iters: int, baseline_file: str = None
+) -> dict:
     """Run perf stat and parse results."""
     script = generate_runner_script(kernel_package, op_path, warmup, iters, baseline_file)
 
@@ -131,9 +137,13 @@ def run_perf_stat(kernel_package: str, op_path: str, warmup: int, iters: int, ba
             return {}
 
         cmd = [
-            perf_bin, "stat",
-            "-e", ",".join(counters),
-            "--", sys.executable, script_path,
+            perf_bin,
+            "stat",
+            "-e",
+            ",".join(counters),
+            "--",
+            sys.executable,
+            script_path,
         ]
 
         print(f"  Running: {' '.join(cmd[:6])} ...")
@@ -191,7 +201,7 @@ def print_analysis(stats: dict):
     """Print analysis and optimization recommendations."""
 
     print(f"\n{'=' * 70}")
-    print(f"Hardware Counter Analysis")
+    print("Hardware Counter Analysis")
     print(f"{'=' * 70}\n")
 
     # IPC
@@ -223,7 +233,7 @@ def print_analysis(stats: dict):
 
     # Recommendations
     print(f"{'=' * 70}")
-    print(f"Optimization Recommendations")
+    print("Optimization Recommendations")
     print(f"{'=' * 70}\n")
 
     recommendations = []
@@ -273,9 +283,7 @@ def print_analysis(stats: dict):
         )
 
     if not recommendations:
-        recommendations.append(
-            ">> All counters look healthy. Focus on algorithmic improvements."
-        )
+        recommendations.append(">> All counters look healthy. Focus on algorithmic improvements.")
 
     for rec in recommendations:
         print(f"  {rec}\n")
@@ -284,14 +292,16 @@ def print_analysis(stats: dict):
 def main():
     parser = argparse.ArgumentParser(description="Profile CPU kernel with perf stat")
     parser.add_argument("--kernel-package", required=True, help="Kernel package name")
-    parser.add_argument("--op", required=True, help="Kernel function path (e.g., my_kernel.forward)")
+    parser.add_argument(
+        "--op", required=True, help="Kernel function path (e.g., my_kernel.forward)"
+    )
     parser.add_argument("--baseline", default=None, help="Baseline file for getting inputs")
     parser.add_argument("--warmup", type=int, default=10, help="Warmup iterations")
     parser.add_argument("--iters", type=int, default=100, help="Profiled iterations")
     args = parser.parse_args()
 
     print(f"\n{'=' * 70}")
-    print(f"CPU Kernel Profiler")
+    print("CPU Kernel Profiler")
     print(f"{'=' * 70}")
     print(f"Kernel: {args.op}")
     print(f"Warmup: {args.warmup}, Iters: {args.iters}")
@@ -301,7 +311,9 @@ def main():
         sys.exit(0)
 
     if not _check_perf_available():
-        print("\n  'perf' not found. Install linux-tools-common or run with perf_stat_enabled=false.")
+        print(
+            "\n  'perf' not found. Install linux-tools-common or run with perf_stat_enabled=false."
+        )
         sys.exit(1)
 
     stats = run_perf_stat(args.kernel_package, args.op, args.warmup, args.iters, args.baseline)
@@ -309,7 +321,9 @@ def main():
     if stats:
         print_analysis(stats)
     else:
-        print("\n  No stats collected. Check perf permissions (try: echo -1 > /proc/sys/kernel/perf_event_paranoid)")
+        print(
+            "\n  No stats collected. Check perf permissions (try: echo -1 > /proc/sys/kernel/perf_event_paranoid)"
+        )
 
 
 if __name__ == "__main__":

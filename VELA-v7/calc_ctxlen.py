@@ -1,19 +1,26 @@
-from Vela7.tokenizer.rwkv_tokenizer import TRIE_TOKENIZER
-from Vela7.src.dataset import preprocess, IGNORE_INDEX, IMAGE_TOKEN_INDEX, load_data_file
-from Vela7.src.dataset import process_image_tokens_in_conversations, process_tokens_in_conversations
 import argparse
-import json
-from tqdm import tqdm
-import numpy as np
 import copy
+import json
+
+import numpy as np
+from tqdm import tqdm
+
+from Vela7.src.dataset import (
+    IGNORE_INDEX,
+    load_data_file,
+    preprocess,
+    process_tokens_in_conversations,
+)
+from Vela7.tokenizer.rwkv_tokenizer import TRIE_TOKENIZER
 
 
 def truncate_labels(input_ids, labels, max_len):
-    valid_labels = [l for l in labels if l != IGNORE_INDEX]
+    valid_labels = [label for label in labels if label != IGNORE_INDEX]
     if valid_labels:
         return input_ids[:max_len], labels[:max_len]
     else:
         return input_ids[-max_len:], labels[-max_len:]
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -25,16 +32,16 @@ def parse_args():
     args = parser.parse_args()
     return args
 
+
 if __name__ == "__main__":
     args = parse_args()
     if args.debug_mode:
-        print("arguments:",args)
+        print("arguments:", args)
     tokenizer = TRIE_TOKENIZER("tokenizer/rwkv_vocab_v20230424.txt")
     data_list = load_data_file(args.data_file)
     ctx_lens, valid_label_lens, num_conv_rounds = [], [], []
     for data in tqdm(data_list):
-        conversations = process_tokens_in_conversations(
-                copy.deepcopy(data["conversations"]))
+        conversations = process_tokens_in_conversations(copy.deepcopy(data["conversations"]))
 
         data_dict = preprocess(
             conversations,
@@ -43,19 +50,20 @@ if __name__ == "__main__":
             ctx_len=None,
             pad_token_id=0,
             num_token_per_image=args.num_token_per_image,
-            do_pad_to_max_length=False)
+            do_pad_to_max_length=False,
+        )
 
-        data_dict["input_ids"] = data_dict["input_ids"].tolist()
-        data_dict["labels"] = data_dict["labels"].tolist()
-        valid_labels = [l for l in data_dict["labels"] if l != IGNORE_INDEX]
+        data_dict["input_ids"] = data_dict["input_ids"].tolist()  # type: ignore
+        data_dict["labels"] = data_dict["labels"].tolist()  # type: ignore
+        valid_labels = [label for label in data_dict["labels"] if label != IGNORE_INDEX]
         if args.debug_mode and len(valid_labels) == 0:
             debug_msg = dict(
                 id=data["id"],
                 image=data.get("image", None),
-                ctx_len = len(data_dict["input_ids"]),
-                valid_label_len = len(valid_labels),
-                num_rounds = len(conversations),
-                input_text = data_dict["input_text"],
+                ctx_len=len(data_dict["input_ids"]),
+                valid_label_len=len(valid_labels),
+                num_rounds=len(conversations),
+                input_text=data_dict["input_text"],
             )
             print(json.dumps(debug_msg))
 
@@ -95,14 +103,23 @@ if __name__ == "__main__":
     print("99% num rounds", sorted(num_conv_rounds)[int(len(num_conv_rounds) * 0.99)])
     #
     if args.batch_size is not None:
-        # convert to batch 
-        batch_valid_label_lens = [valid_label_lens[i:i+args.batch_size] for i in range(0, len(valid_label_lens), args.batch_size)]
+        # convert to batch
+        batch_valid_label_lens = [
+            valid_label_lens[i : i + args.batch_size]
+            for i in range(0, len(valid_label_lens), args.batch_size)
+        ]
         print(batch_valid_label_lens[:10])
         # sum over batch
         batch_valid_label_lens = [sum(batch) for batch in batch_valid_label_lens]
         print(f"batch size: {args.batch_size}")
         print("max batch valid label", max(batch_valid_label_lens))
         print("min batch valid label len", min(batch_valid_label_lens))
-        print("avg batch valid label len", round(sum(batch_valid_label_lens) / len(batch_valid_label_lens), 3))
+        print(
+            "avg batch valid label len",
+            round(sum(batch_valid_label_lens) / len(batch_valid_label_lens), 3),
+        )
         print("std batch valid label len", round(np.std(batch_valid_label_lens), 3))
-        print("median batch valid label len", sorted(batch_valid_label_lens)[len(batch_valid_label_lens) // 2])
+        print(
+            "median batch valid label len",
+            sorted(batch_valid_label_lens)[len(batch_valid_label_lens) // 2],
+        )

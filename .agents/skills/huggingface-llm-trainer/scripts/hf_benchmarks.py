@@ -27,7 +27,6 @@ import urllib.parse
 import urllib.request
 from typing import Any, Iterable
 
-
 BASE_URL = "https://huggingface.co"
 DEFAULT_TIMEOUT = 30
 

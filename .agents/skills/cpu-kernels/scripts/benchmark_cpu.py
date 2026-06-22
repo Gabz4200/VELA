@@ -41,7 +41,7 @@ def _load_kernel_func(kernel_package: str, op_path: str):
     """
     parts = op_path.split(".")
     if len(parts) < 2:
-        print(f"Error: --op should be package.function (e.g., my_kernel.forward)")
+        print("Error: --op should be package.function (e.g., my_kernel.forward)")
         sys.exit(1)
 
     mod = importlib.import_module(parts[0])
@@ -67,7 +67,9 @@ def run_correctness(baseline_mod, kernel_func, device="cpu", atol=1e-2, rtol=1e-
         if hasattr(baseline_mod, "get_reference_output"):
             ref_output = baseline_mod.get_reference_output(*inputs)
         elif hasattr(baseline_mod, "Model"):
-            init_inputs = baseline_mod.get_init_inputs() if hasattr(baseline_mod, "get_init_inputs") else []
+            init_inputs = (
+                baseline_mod.get_init_inputs() if hasattr(baseline_mod, "get_init_inputs") else []
+            )
             model = baseline_mod.Model(*init_inputs)
             model.eval()
             with torch.no_grad():
@@ -109,7 +111,9 @@ def run_correctness(baseline_mod, kernel_func, device="cpu", atol=1e-2, rtol=1e-
             for dim in reversed(ref_output.shape):
                 idx.insert(0, remaining % dim)
                 remaining //= dim
-            print(f"  Largest diff at index {tuple(idx)}: ref={ref_output.flatten()[flat_idx]:.6f}, kernel={kernel_output.flatten()[flat_idx]:.6f}")
+            print(
+                f"  Largest diff at index {tuple(idx)}: ref={ref_output.flatten()[flat_idx]:.6f}, kernel={kernel_output.flatten()[flat_idx]:.6f}"
+            )
 
         return correct
 
@@ -140,7 +144,9 @@ def run_performance(baseline_mod, kernel_func, baseline_us=None, warmup=10, iter
         if hasattr(baseline_mod, "get_reference_output"):
             ref_func = baseline_mod.get_reference_output
         elif hasattr(baseline_mod, "Model"):
-            init_inputs = baseline_mod.get_init_inputs() if hasattr(baseline_mod, "get_init_inputs") else []
+            init_inputs = (
+                baseline_mod.get_init_inputs() if hasattr(baseline_mod, "get_init_inputs") else []
+            )
             model = baseline_mod.Model(*init_inputs)
             model.eval()
             ref_func = lambda *args: model(*args)
@@ -181,11 +187,21 @@ def run_performance(baseline_mod, kernel_func, baseline_us=None, warmup=10, iter
 def main():
     parser = argparse.ArgumentParser(description="Benchmark CPU kernel against PyTorch baseline")
     parser.add_argument("baseline_file", type=Path, help="PyTorch baseline file")
-    parser.add_argument("--kernel-package", required=True, help="Kernel package name (pip-installed)")
-    parser.add_argument("--op", required=True, help="Kernel function path (e.g., my_kernel.forward)")
-    parser.add_argument("--baseline-us", type=float, default=None, help="Cached baseline time in microseconds")
-    parser.add_argument("--atol", type=float, default=1e-2, help="Absolute tolerance for correctness")
-    parser.add_argument("--rtol", type=float, default=1e-2, help="Relative tolerance for correctness")
+    parser.add_argument(
+        "--kernel-package", required=True, help="Kernel package name (pip-installed)"
+    )
+    parser.add_argument(
+        "--op", required=True, help="Kernel function path (e.g., my_kernel.forward)"
+    )
+    parser.add_argument(
+        "--baseline-us", type=float, default=None, help="Cached baseline time in microseconds"
+    )
+    parser.add_argument(
+        "--atol", type=float, default=1e-2, help="Absolute tolerance for correctness"
+    )
+    parser.add_argument(
+        "--rtol", type=float, default=1e-2, help="Relative tolerance for correctness"
+    )
     args = parser.parse_args()
 
     if not args.baseline_file.exists():
@@ -193,7 +209,7 @@ def main():
         sys.exit(1)
 
     print(f"\n{'=' * 70}")
-    print(f"CPU Kernel Benchmark")
+    print("CPU Kernel Benchmark")
     print(f"{'=' * 70}")
     print(f"Baseline:       {args.baseline_file}")
     print(f"Kernel package: {args.kernel_package}")
@@ -208,25 +224,27 @@ def main():
         kernel_func = _load_kernel_func(args.kernel_package, args.op)
     except Exception as e:
         print(f"\nError loading kernel: {e}")
-        print(f"Make sure '{args.kernel_package}' is installed: pip install dist/*.whl --force-reinstall")
+        print(
+            f"Make sure '{args.kernel_package}' is installed: pip install dist/*.whl --force-reinstall"
+        )
         sys.exit(1)
 
     # Correctness
     print(f"\n{'=' * 70}")
-    print(f"Correctness")
+    print("Correctness")
     print(f"{'=' * 70}")
     correct = run_correctness(baseline_mod, kernel_func, atol=args.atol, rtol=args.rtol)
     print(f"\n  Result: {'PASSED' if correct else 'FAILED'}")
 
     # Performance
     print(f"\n{'=' * 70}")
-    print(f"Performance")
+    print("Performance")
     print(f"{'=' * 70}")
     bl_us, kr_us, speedup = run_performance(baseline_mod, kernel_func, baseline_us=args.baseline_us)
 
     # Summary
     print(f"\n{'=' * 70}")
-    print(f"Summary")
+    print("Summary")
     print(f"{'=' * 70}")
     print(f"Correctness: {'PASSED' if correct else 'FAILED'}")
     if speedup is not None:

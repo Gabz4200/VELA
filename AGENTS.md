@@ -9,9 +9,10 @@ For the vision encoder, VELA-v7 uses **SigLino** (distilled from DINOv3 and SigL
 1. **Visual Token Input**: Raw images are processed by the `SigLinoImageProcessor` to construct multi-scale patches and sequence parameters (shapes, locations).
 2. **Vision Encoding (SigLino)**: Visual features are extracted by a locally-vendored `SigLino` model.
    - **Attention Dispatch**: Device-aware routing in `Attention.forward` dispatches CUDA tensors to Triton-based `flex_attention` (with sink attention auxiliary scaling) and CPU tensors to a pre-compiled `scaled_dot_product_attention` loop.
-3. **Visual Fusion & Projection**: Vision features are projected into VELA's embedding dimension via linear projection layer mappings and concatenated directly into the sequence embedding space before passing to the language decoder.
+3. **Visual Fusion & Projection**: Vision features are projected into VELA's embedding dimension via linear projection layer mappings and injected in-place inside the sequence (wrapped within `<img_start>` and `<img_end>` tokens) before passing to the language decoder, enabling dynamic early fusion of document images and text.
 4. **RWKV Recurrent Stack**: The unified sequence of visual and language tokens passes through RWKV-7 block layers.
    - **Attention Residuals (Block AttnRes)**: The main residual path in RWKV-7 blocks. It replaces typical additive residual links with learned cross-layer attention mechanisms to combat hidden-state dilution.
+   - **MHC MoE Layers (Layers 0-3)**: The first 4 layers of the recurrent stack are configured as Dense MoE blocks with 4 experts. Routing weights are computed from WKV head outputs (pre-output projection) using RMSNorm, linear projections, and a 20-iteration Sinkhorn-Knopp algorithm, following the Manifold-Constrained Hyper-Connections (mHC) formulation.
    - **WindBackstepping CUDA Kernel**: An optimized custom kernel performing RWKV-7 linear recurrence on GPU.
 
 ## Key Directories
@@ -80,4 +81,4 @@ All packaging, dependencies, and environments are managed via `uv`.
 
 ## Testing & QA
 * **Framework**: `pytest`.
-* **Testing Pattern**: Runs actual regression tests loading VisualRWKV weights. Checks correctness of forward/backward operations, asserts that intermediate representations have no NaNs or Infs, verifies customized kernel builds, and tests CPU quantizations under `test_with_weights.py`.
+* **Testing Pattern**: Runs actual regression tests loading VisualRWKV weights. Checks correctness of forward/backward operations, asserts that intermediate representations have no NaNs or Infs, verifies customized kernel builds, and tests CPU quantizations under `test_with_weights.py`. Also verifies ChatML formatting, in-place token wrapping, Sinkhorn-Knopp convergence, and bfloat16 gradient flow stability under `test_moe_early_fusion.py`.

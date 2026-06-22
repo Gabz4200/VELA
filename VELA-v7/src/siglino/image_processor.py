@@ -100,7 +100,9 @@ class SigLinoImageProcessor:
         self.do_rescale = do_rescale
         self.do_normalize = do_normalize
 
-    def preprocess_single(self, image: "Image.Image | np.ndarray") -> tuple[np.ndarray, tuple[int, int]]:
+    def preprocess_single(
+        self, image: "Image.Image | np.ndarray"
+    ) -> tuple[np.ndarray, tuple[int, int]]:
         """Preprocess one image → (HWC float32 array, (n_patches_h, n_patches_w))."""
         if isinstance(image, Image.Image):
             image = np.array(image.convert("RGB"))
@@ -115,7 +117,8 @@ class SigLinoImageProcessor:
 
         if self.do_resize:
             resized_height, resized_width = smart_resize(
-                height, width,
+                height,
+                width,
                 factor=self.patch_size,
                 min_pixels=self.min_pixels,
                 max_pixels=self.max_pixels,
@@ -198,7 +201,8 @@ class SigLinoImageProcessor:
             images = [images]
         pixel_values, spatial_shapes = self.preprocess(images)
         return self.batch_images_with_mask(
-            pixel_values, spatial_shapes,
+            pixel_values,
+            spatial_shapes,
             max_num_patches=max_num_patches,
             pad=pad,
             output_dtype=output_dtype,

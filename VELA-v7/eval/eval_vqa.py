@@ -1,8 +1,8 @@
 """
- Copyright (c) 2022, salesforce.com, inc.
- All rights reserved.
- SPDX-License-Identifier: BSD-3-Clause
- For full license text, see the LICENSE file in the repo root or https://opensource.org/licenses/BSD-3-Clause
+Copyright (c) 2022, salesforce.com, inc.
+All rights reserved.
+SPDX-License-Identifier: BSD-3-Clause
+For full license text, see the LICENSE file in the repo root or https://opensource.org/licenses/BSD-3-Clause
 """
 
 # coding=utf-8
@@ -24,11 +24,12 @@ __author__ = "aagrawal"
 
 # Help on each function can be accessed by: "help(COCO.function)"
 
-import json
-import datetime
+import argparse
 import copy
-import sys
+import datetime
+import json
 import re
+import sys
 
 
 class VQA:
@@ -41,12 +42,12 @@ class VQA:
         # load dataset
         self.dataset = {}
         self.questions = {}
-        self.qa = {}
-        self.qqa = {}
+        self.qa: dict = {}
+        self.qqa: dict = {}
         self.imgToQA = {}
-        if not annotation_file == None and not question_file == None:
+        if annotation_file is not None and question_file is not None:
             print("loading VQA annotations and questions into memory...")
-            time_t = datetime.datetime.utcnow()
+            datetime.datetime.utcnow()
             dataset = json.load(open(annotation_file, "r"))
             questions = json.load(open(question_file, "r"))
             self.dataset = dataset
@@ -57,10 +58,10 @@ class VQA:
         # create index
         print("creating index...")
         imgToQA = {ann["image_id"]: [] for ann in self.dataset["annotations"]}
-        qa = {ann["question_id"]: [] for ann in self.dataset["annotations"]}
-        qqa = {ann["question_id"]: [] for ann in self.dataset["annotations"]}
+        qa = {}
+        qqa = {}
         for ann in self.dataset["annotations"]:
-            imgToQA[ann["image_id"]] += [ann]
+            imgToQA[ann["image_id"]].append(ann)
             qa[ann["question_id"]] = ann
         for ques in self.questions["questions"]:
             qqa[ques["question_id"]] = ques
@@ -76,7 +77,7 @@ class VQA:
         Print information about the VQA annotation file.
         :return:
         """
-        for key, value in self.datset["info"].items():
+        for key, value in self.dataset["info"].items():
             print("%s: %s" % (key, value))
 
     def getQuesIds(self, imgIds=[], quesTypes=[], ansTypes=[]):
@@ -87,9 +88,9 @@ class VQA:
                         ansTypes  (str array)   : get question ids for given answer types
         :return:    ids   (int array)   : integer array of question ids
         """
-        imgIds = imgIds if type(imgIds) == list else [imgIds]
-        quesTypes = quesTypes if type(quesTypes) == list else [quesTypes]
-        ansTypes = ansTypes if type(ansTypes) == list else [ansTypes]
+        imgIds = imgIds if isinstance(imgIds, list) else [imgIds]
+        quesTypes = quesTypes if isinstance(quesTypes, list) else [quesTypes]
+        ansTypes = ansTypes if isinstance(ansTypes, list) else [ansTypes]
 
         if len(imgIds) == len(quesTypes) == len(ansTypes) == 0:
             anns = self.dataset["annotations"]
@@ -122,17 +123,15 @@ class VQA:
         ansTypes  (str array)   : get image ids for given answer types
          :return: ids     (int array)   : integer array of image ids
         """
-        quesIds = quesIds if type(quesIds) == list else [quesIds]
-        quesTypes = quesTypes if type(quesTypes) == list else [quesTypes]
-        ansTypes = ansTypes if type(ansTypes) == list else [ansTypes]
+        quesIds = quesIds if isinstance(quesIds, list) else [quesIds]
+        quesTypes = quesTypes if isinstance(quesTypes, list) else [quesTypes]
+        ansTypes = ansTypes if isinstance(ansTypes, list) else [ansTypes]
 
         if len(quesIds) == len(quesTypes) == len(ansTypes) == 0:
             anns = self.dataset["annotations"]
         else:
             if not len(quesIds) == 0:
-                anns = sum(
-                    [self.qa[quesId] for quesId in quesIds if quesId in self.qa], []
-                )
+                anns = sum([self.qa[quesId] for quesId in quesIds if quesId in self.qa], [])
             else:
                 anns = self.dataset["annotations"]
             anns = (
@@ -154,9 +153,9 @@ class VQA:
         :param ids (int array)       : integer ids specifying question ids
         :return: qa (object array)   : loaded qa objects
         """
-        if type(ids) == list:
+        if isinstance(ids, list):
             return [self.qa[id] for id in ids]
-        elif type(ids) == int:
+        elif isinstance(ids, int):
             return [self.qa[ids]]
 
     def showQA(self, anns):
@@ -189,26 +188,24 @@ class VQA:
 
         print("Loading and preparing results...     ")
         time_t = datetime.datetime.utcnow()
-        anns = [json.loads(l) for l in open(resFile, "r")]
-        assert type(anns) == list, "results is not an array of objects"
+        anns = [json.loads(line) for line in open(resFile, "r")]
+        assert isinstance(anns, list), "results is not an array of objects"
         annsQuesIds = [ann["question_id"] for ann in anns]
-        assert set(annsQuesIds) == set(
-            self.getQuesIds()
-        ), "Results do not correspond to current VQA set. Either the results do not have predictions for all question ids in annotation file or there is atleast one question id that does not belong to the question ids in the annotation file."
+        assert set(annsQuesIds) == set(self.getQuesIds()), (
+            "Results do not correspond to current VQA set. Either the results do not have predictions for all question ids in annotation file or there is atleast one question id that does not belong to the question ids in the annotation file."
+        )
         for ann in anns:
             quesId = ann["question_id"]
             if res.dataset["task_type"] == "Multiple Choice":
-                assert (
-                    ann["answer"] in self.qqa[quesId]["multiple_choices"]
-                ), "predicted answer is not one of the multiple choices"
+                assert ann["answer"] in self.qqa[quesId]["multiple_choices"], (
+                    "predicted answer is not one of the multiple choices"
+                )
             qaAnn = self.qa[quesId]
             ann["image_id"] = qaAnn["image_id"]
             ann["question_type"] = qaAnn["question_type"]
             ann["answer_type"] = qaAnn["answer_type"]
             ann["answer"] = ann["text"]
-        print(
-            "DONE (t=%0.2fs)" % ((datetime.datetime.utcnow() - time_t).total_seconds())
-        )
+        print("DONE (t=%0.2fs)" % ((datetime.datetime.utcnow() - time_t).total_seconds()))
 
         res.dataset["annotations"] = anns
         res.createIndex()
@@ -365,8 +362,8 @@ class VQAEval:
         }
         self.articles = ["a", "an", "the"]
 
-        self.periodStrip = re.compile("(?!<=\d)(\.)(?!\d)")
-        self.commaStrip = re.compile("(\d)(,)(\d)")
+        self.periodStrip = re.compile(r"(?!<=\d)(\.)(?!\d)")
+        self.commaStrip = re.compile(r"(\d)(,)(\d)")
         self.punct = [
             ";",
             r"/",
@@ -392,7 +389,9 @@ class VQAEval:
         ]
 
     def evaluate(self, quesIds=None):
-        if quesIds == None:
+        assert self.vqa is not None
+        assert self.vqaRes is not None
+        if quesIds is None:
             quesIds = [quesId for quesId in self.params["question_id"]]
         gts = {}
         res = {}
@@ -421,9 +420,7 @@ class VQAEval:
                 for ansDic in gts[quesId]["answers"]:
                     ansDic["answer"] = self.processPunctuation(ansDic["answer"])
             for gtAnsDatum in gts[quesId]["answers"]:
-                otherGTAns = [
-                    item for item in gts[quesId]["answers"] if item != gtAnsDatum
-                ]
+                otherGTAns = [item for item in gts[quesId]["answers"] if item != gtAnsDatum]
                 matchingAns = [item for item in otherGTAns if item["answer"] == resAns]
                 acc = min(1, float(len(matchingAns)) / 3)
                 gtAcc.append(acc)
@@ -464,7 +461,7 @@ class VQAEval:
         outText = inText
         for p in self.punct:
             if (p + " " in inText or " " + p in inText) or (
-                re.search(self.commaStrip, inText) != None
+                re.search(self.commaStrip, inText) is not None
             ):
                 outText = outText.replace(p, "")
             else:
@@ -497,9 +494,7 @@ class VQAEval:
             for quesType in accQuesType
         }
         self.accuracy["perAnswerType"] = {
-            ansType: round(
-                100 * float(sum(accAnsType[ansType])) / len(accAnsType[ansType]), self.n
-            )
+            ansType: round(100 * float(sum(accAnsType[ansType])) / len(accAnsType[ansType]), self.n)
             for ansType in accAnsType
         }
 
@@ -537,22 +532,21 @@ class VQAEval:
         sys.stdout.write(text)
         sys.stdout.flush()
 
-import argparse
+
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--annotation-file', type=str)
-    parser.add_argument('--question-file', type=str)
-    parser.add_argument('--result-file', type=str)
+    parser.add_argument("--annotation-file", type=str)
+    parser.add_argument("--question-file", type=str)
+    parser.add_argument("--result-file", type=str)
     return parser.parse_args()
+
 
 if __name__ == "__main__":
     args = get_args()
     metrics = {}
     vqa = VQA(args.annotation_file, args.question_file)
     # loadRes has been modified to adapt to the vela format
-    vqa_result = vqa.loadRes(
-        resFile=args.result_file, quesFile=args.question_file
-    )
+    vqa_result = vqa.loadRes(resFile=args.result_file, quesFile=args.question_file)
     vqa_scorer = VQAEval(vqa, vqa_result, n=2)
     print("Start VQA evaluation.")
     vqa_scorer.evaluate()
@@ -564,10 +558,7 @@ if __name__ == "__main__":
     print("Per Answer Type Accuracy is the following:")
 
     for ans_type in vqa_scorer.accuracy["perAnswerType"]:
-        print(
-            "%s : %.02f"
-            % (ans_type, vqa_scorer.accuracy["perAnswerType"][ans_type])
-        )
+        print("%s : %.02f" % (ans_type, vqa_scorer.accuracy["perAnswerType"][ans_type]))
         metrics[ans_type] = vqa_scorer.accuracy["perAnswerType"][ans_type]
 
     # output badcase

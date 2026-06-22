@@ -9,6 +9,12 @@ All notable changes to the VELA project will be documented in this file.
 - Replaced the custom/external vision encoder with a locally-vendored **SigLino** model (distilled from DINOv3 and SigLIP2) supporting optimized CPU (compiled SDPA) and GPU (flex_attention) attention routing.
 - Integrated optional **torchao** weight quantization support for the SigLino vision encoder (CUDA int4 weight-only and CPU int8 weight-only) during model load.
 - Added a PCA visualization script (`VELA-v7/eval/pca_vis.py`) allowing visual analysis of patch features across SigLino, SigLIP2, and DINOv3 with support for both local checkpoints and Hugging Face Hub repos, custom 2-row layout rendering, dynamic resolution scaling, and torchao quantization.
+- Added special tokens (`<img_start>`, `<img_end>`, `<im_start>`, `<im_end>`) to the TrieTokenizer vocabulary file (`VELA-v7/tokenizer/rwkv_vocab_v20230424.txt`).
+- Implemented customizable ChatML parser (`<im_start>{role}:{metadata}\n{content}<im_end>\n`) with dynamic target masking of metadata headers and in-place wrapping of visual tokens inside `<img_start>` and `<img_end>`.
+- Implemented `MHCBlock` layers for layers 0-3 with 4 FFN experts routed using Manifold-Constrained Hyper-Connections and 20-iteration Sinkhorn-Knopp doubly stochastic matrices.
+- Added a numerical stability wrapper for `rmsnorm` using `torch.rsqrt` to prevent NaN gradients on zero/padded inputs.
+- Implemented standard weight conversion helper (`convert_rwkv7_to_vela7_moe` in `src/utils.py`) to replicate standard FFN parameters across MoE experts.
+- Added a comprehensive unit test suite in `tests/test_moe_early_fusion.py` to verify formatting, Sinkhorn-Knopp convergence, and gradient flow stability.
 
 ### Changed
 - Finalized directory consolidation by moving `VELA-v7/v7.04/` contents directly to the `VELA-v7/` root. The codebase is now unversioned internally, stopping the nested `v7.xx` folder structure.
@@ -28,6 +34,8 @@ All notable changes to the VELA project will be documented in this file.
 - Forward pass produces finite output (μ=-1.5, σ=2.2, max|·|=15.6) with no NaN/Inf.
 - Backward pass produces 0 NaN / 0 Inf gradients across all 399 parameters with non-zero gradient flow.
 - Hidden-state drift is informational (cross-version weight normalization variance); forward/backward stability are the definitive regression signals.
+- Verified stable gradient flow (0 NaN / 0 Inf parameters) through visual token layers, `MHCBlock`, and the custom recurrence kernel under `bfloat16`.
+- Verified convergence and correctness of the 20-iteration Sinkhorn-Knopp doubly stochastic projection.
 
 ### Removed
 - Fully removed all references, imports, and dependencies related to `torch-directml` and the `dml` execution strategy from both `VELA-v7/v7.03` and `VELA-v7/v7.04`.

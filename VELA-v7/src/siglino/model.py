@@ -1,19 +1,18 @@
 # Main model implementation for Falcon Vision Encoder
 # A pure vision transformer distilled from DINOv3 and SigLIP2
 
-import numpy as np
+import einops as E
 import torch
 import torch.nn.functional as F
 from torch import nn
-import einops as E
 
+from .attention import Attention, create_attention_mask
 from .configs import SigLinoArgs
-from .attention import Attention, create_attention_mask, _FLEX_AVAILABLE
-from .moe import MoE, FeedForward
+from .moe import FeedForward, MoE
 from .rope import (
+    apply_golden_freqs_cis_to_visual_pos,
     precompute_freqs_cis,
     precompute_golden_freqs_cis,
-    apply_golden_freqs_cis_to_visual_pos,
 )
 
 
@@ -50,7 +49,9 @@ class Siglip2MultiheadAttentionPoolingHead(nn.Module):
         self.mlp = Siglip2MLP(hidden_size, 4304)
         self.num_heads = num_attention_heads
 
-    def forward(self, hidden_state: torch.Tensor, attention_mask: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(
+        self, hidden_state: torch.Tensor, attention_mask: torch.Tensor | None = None
+    ) -> torch.Tensor:
         batch_size = hidden_state.shape[0]
         probe = self.probe.repeat(batch_size, 1, 1)
 
@@ -61,7 +62,9 @@ class Siglip2MultiheadAttentionPoolingHead(nn.Module):
             attention_mask = attention_mask.repeat(1, self.num_heads, target_len, 1)
             attention_mask = attention_mask.reshape(-1, target_len, source_len)
 
-        hidden_state = self.attention(probe, hidden_state, hidden_state, attn_mask=attention_mask)[0]
+        hidden_state = self.attention(probe, hidden_state, hidden_state, attn_mask=attention_mask)[
+            0
+        ]
         residual = hidden_state
         hidden_state = self.layernorm(hidden_state)
         hidden_state = residual + self.mlp(hidden_state)
@@ -126,7 +129,7 @@ class TransformerBlock(nn.Module):
             self.feed_forward = FeedForward(args.dim, args.moe_dim)
             self.moe_enabled = False
 
-        if args.depth_init if hasattr(args, 'depth_init') else True:
+        if args.depth_init if hasattr(args, "depth_init") else True:
             self.weight_init_std = 0.02 / (2 * (layer_id + 1)) ** 0.5
         else:
             self.weight_init_std = 0.02 / (2 * args.n_layers) ** 0.5
@@ -186,7 +189,7 @@ class SigLino(nn.Module):
         self.n_storage_tokens = args.n_storage_tokens
 
         # Patch embedding
-        self.n_pixels_per_patch = args.temporal_patch_size * args.spatial_patch_size ** 2
+        self.n_pixels_per_patch = args.temporal_patch_size * args.spatial_patch_size**2
         self.img_projector = nn.Linear(
             self.n_pixels_per_patch * args.channel_size,
             args.dim,
@@ -203,7 +206,6 @@ class SigLino(nn.Module):
         d = head_dim // 2
         self.register_buffer("freqs_cis_golden", self._precompute_golden_freqs_cis(d, args))
         self.register_buffer("freqs_cis", self._precompute_freqs_cis(d, args), persistent=False)
-
 
         # Transformer layers
         self.layers = nn.ModuleDict()
@@ -239,9 +241,9 @@ class SigLino(nn.Module):
         )
 
     def _apply(self, fn):
-        # Workaround to prevent casting complex RoPE buffers to real dtypes 
+        # Workaround to prevent casting complex RoPE buffers to real dtypes
         # (which triggers a warning and discards the imaginary part).
-        
+
         # 1. Identify complex buffers and remove them from standard application
         complex_buffers = {}
         # Iterate over a COPY of the items (or just keys) to avoid "dictionary changed size"
@@ -251,26 +253,26 @@ class SigLino(nn.Module):
                 del self._buffers[name]
 
         # 2. Apply fn (device/dtype moves) to the rest of the model
-        ret = super()._apply(fn)
+        super()._apply(fn)
 
         # 3. Handle complex buffers manually
         for name, buf in complex_buffers.items():
             # Probe fn to see if it performs a destructive cast to real
             dummy = torch.tensor([0.0], device=buf.device)
             res = fn(dummy)
-            
+
             if not res.is_complex():
-                # fn casts to real (e.g. bfloat16). 
+                # fn casts to real (e.g. bfloat16).
                 # We should ONLY apply the device move, but keep the buffer complex.
                 new_buf = buf.to(device=res.device)
             else:
                 # fn preserves complex or is casting to complex. Safe to apply.
                 new_buf = fn(buf)
-            
+
             # Restore buffer with original persistence setting
             persistent = name not in self._non_persistent_buffers_set
             self.register_buffer(name, new_buf, persistent=persistent)
-        
+
         return self
 
     def init_weights(self, buffer_device: torch.device | None = None):
@@ -301,19 +303,19 @@ class SigLino(nn.Module):
         """Convert images to patches. Input: (N, C, H, W) or (N, H, W, C)."""
         if images.shape[-1] == 3:  # NHWC format
             images = images.permute(0, 3, 1, 2)  # -> NCHW
-        
+
         N, C, H, W = images.shape
         ph = pw = self.patch_size
         h, w = H // ph, W // pw
-        
+
         # Create patches
         patches = images.unfold(2, ph, ph).unfold(3, pw, pw)
         patches = patches.permute(0, 2, 3, 1, 4, 5)  # N, h, w, C, ph, pw
         patches = patches.reshape(N, h * w, C * ph * pw)
-        
+
         # Create spatial shape tensor
         spatial_shape = torch.tensor([[h, w]] * N, device=images.device)
-        
+
         return patches, spatial_shape
 
     _cached_block_mask = None  # BlockMask | None
@@ -405,8 +407,8 @@ class SigLino(nn.Module):
                         wpos[n, idx] = w_norm[j]
 
             # Set NaN for non-patch positions
-            hpos[n, :R] = float('nan')
-            wpos[n, :R] = float('nan')
+            hpos[n, :R] = float("nan")
+            wpos[n, :R] = float("nan")
 
         result = torch.stack([tpos, hpos, wpos], dim=0)  # (3, N, S)
         self._cached_thw_pos = result
@@ -422,13 +424,13 @@ class SigLino(nn.Module):
     ) -> dict[str, dict[str, torch.Tensor]]:
         """
         Forward pass for vision encoding.
-        
+
         Args:
             pixel_values: Image patches (N, L, C*patch_size^2) - patches only, no CLS/register placeholders
             padding_mask: (N, L) mask where 1 = valid patch, 0 = padding
             spatial_shapes: Shape of each image (N, 2) with (H_patches, W_patches)
             compile: Whether to use compiled FlexAttention
-        
+
         Returns:
             Dictionary with:
             - "output": patch features {"dinov3": ..., "siglip2": ..., "siglino": ...}
@@ -448,7 +450,7 @@ class SigLino(nn.Module):
         # Create default padding mask if not provided (all patches valid)
         if padding_mask is None:
             padding_mask = torch.ones((N, L), dtype=torch.float32, device=device)
-        
+
         # Project patches
         h_NLD = self.img_projector(pixel_values)
 
@@ -477,13 +479,15 @@ class SigLino(nn.Module):
         # Compute 2D RoPE positions
         thw_pos = self._get_thw_pos(N, L, spatial_shapes, device)
         pos_thw = E.rearrange(thw_pos, "p n s -> n s p").to(dtype=torch.float32)
-        
+
         # Mark CLS/register positions as NaN (no 2D RoPE for them)
         # Also mark padding positions as NaN
         patch_mask_2d = torch.zeros((N, S), dtype=torch.bool, device=device)
         patch_mask_2d[:, R:] = padding_mask.bool()  # Only valid patches get 2D RoPE
-        pos_thw[:, :, 1:] = pos_thw[:, :, 1:].masked_fill(~patch_mask_2d.unsqueeze(-1), float("nan"))
-        
+        pos_thw[:, :, 1:] = pos_thw[:, :, 1:].masked_fill(
+            ~patch_mask_2d.unsqueeze(-1), float("nan")
+        )
+
         freqs_cis_golden = apply_golden_freqs_cis_to_visual_pos(
             self.freqs_cis_golden.to(dtype=pos_thw.dtype), pos_thw[:, :, 1:]
         )
@@ -514,7 +518,9 @@ class SigLino(nn.Module):
         h_sig = self.siglip2_adapter(h_NSD)
         # Pass the full mask for attention pooling
         siglip_attn_mask = full_mask.reshape(-1)  # Flatten for pooling head
-        student_summary_siglip = self.siglip2_multihead_attention_pooling_head(h_sig, siglip_attn_mask)
+        student_summary_siglip = self.siglip2_multihead_attention_pooling_head(
+            h_sig, siglip_attn_mask
+        )
 
         return {
             "patch_features": {
@@ -528,4 +534,3 @@ class SigLino(nn.Module):
                 "siglino": cls_feats,
             },
         }
-

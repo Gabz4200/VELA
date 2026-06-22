@@ -2,22 +2,24 @@
 # GPU path : flex_attention (Triton kernel, with sink-attention via LSE aux)
 # CPU path : compiled SDPA   (oneDNN/MKL-DNN back-end, no flex required)
 
+import einops as E
 import torch
 import torch.nn.functional as F
 from torch import nn
-import einops as E
 
-from .rope import apply_3d_rotary_emb
 from .kernels.cpu_attn import cpu_sdpa
+from .rope import apply_3d_rotary_emb
 
 # Lazy flex_attention imports — only available when CUDA is compiled in
 try:
     from torch.nn.attention.flex_attention import BlockMask, create_block_mask
+
     from .kernels.cuda_attn import cuda_flex_attn
+
     _FLEX_AVAILABLE = True
 except ImportError:
     _FLEX_AVAILABLE = False
-    BlockMask = None       # type: ignore[assignment,misc]
+    BlockMask = None  # type: ignore[assignment,misc]
     cuda_flex_attn = None  # type: ignore[assignment]
 
 
@@ -43,8 +45,12 @@ class FlexAttentionWrapper(nn.Module):
         compile: bool = True,
         return_aux: bool = False,
     ):
-        assert _FLEX_AVAILABLE and cuda_flex_attn is not None, "flex_attention is not available on this platform"
-        return cuda_flex_attn(q, k, v, block_mask=block_mask, compile=compile, return_lse=return_aux)
+        assert _FLEX_AVAILABLE and cuda_flex_attn is not None, (
+            "flex_attention is not available on this platform"
+        )
+        return cuda_flex_attn(
+            q, k, v, block_mask=block_mask, compile=compile, return_lse=return_aux
+        )
 
 
 class SDPAttentionWrapper(nn.Module):
@@ -136,7 +142,9 @@ class Attention(nn.Module):
         if self.use_flex_attn and _FLEX_AVAILABLE and xq.is_cuda:
             if self.sink_attn:
                 output, aux = self.inner_attention(
-                    xq, xk, xv,
+                    xq,
+                    xk,
+                    xv,
                     block_mask=attention_masks,
                     compile=compile,
                     return_aux=True,
@@ -146,7 +154,9 @@ class Attention(nn.Module):
                 output = (output * sink_scale.unsqueeze(-1)).to(output.dtype)
             else:
                 output = self.inner_attention(
-                    xq, xk, xv,
+                    xq,
+                    xk,
+                    xv,
                     block_mask=attention_masks,
                     compile=compile,
                     return_aux=False,

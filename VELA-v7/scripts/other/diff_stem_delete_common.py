@@ -2,6 +2,7 @@ import os
 import sys
 from pathlib import Path
 
+
 def get_entry_stems_first_level(folder):
     """返回 stem -> 完整路径 的映射（不判断文件类型，只看第一层条目）"""
     stem_to_path = {}
@@ -10,6 +11,7 @@ def get_entry_stems_first_level(folder):
         stem = Path(entry).stem
         stem_to_path[stem] = full_path
     return stem_to_path
+
 
 def main():
     if len(sys.argv) != 3:
@@ -36,6 +38,7 @@ def main():
             print(f"已删除：{stems_a[stem]}")
         except Exception as e:
             print(f"删除失败：{stems_a[stem]}，错误：{e}")
+
 
 if __name__ == "__main__":
     main()

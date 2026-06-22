@@ -1,14 +1,15 @@
-import sys
 import random
-from datasets import load_from_disk
+import sys
 from collections import defaultdict
-from tqdm import tqdm
 from pathlib import Path
 
-ds = load_from_disk(sys.argv[1])['test']
+from datasets import load_from_disk
+from tqdm import tqdm
+
+ds = load_from_disk(sys.argv[1])["test"]
 subtask2idx = defaultdict(list)
 for i, sample in enumerate(tqdm(ds)):
-    sub_task = sample['sub_task']
+    sub_task = sample["sub_task"]
     subtask2idx[sub_task].append(i)
 
 total_idx = []
@@ -22,6 +23,6 @@ for s in subtask2idx:
 
 sorted_idx = sorted(total_idx)
 ds_lite = ds.select(sorted_idx)
-print('lite dataset:', ds_lite)
-output_path = Path(sys.argv[1]).parent / (Path(sys.argv[1]).name + '-lite')
+print("lite dataset:", ds_lite)
+output_path = Path(sys.argv[1]).parent / (Path(sys.argv[1]).name + "-lite")
 ds_lite.save_to_disk(str(output_path))

@@ -1,10 +1,11 @@
 from argparse import ArgumentParser
-import torch
 from pathlib import Path
+
+import torch
 
 parser = ArgumentParser()
 
-parser.add_argument("model_path", type=str, default=None, help="path of vela model") 
+parser.add_argument("model_path", type=str, default=None, help="path of vela model")
 parser.add_argument("output_dir", type=str, default=None, help="path of output file")
 
 args = parser.parse_args()
@@ -22,6 +23,6 @@ for key in state_dict:
         visual_state_dict[key] = state_dict[key].half()
 print("rwkv state dict has keys: ", len(rwkv_state_dict))
 print("visual state dict has keys: ", len(visual_state_dict))
-# save 
+# save
 torch.save(rwkv_state_dict, output_dir / f"{model_name}_rwkv.pth")
 torch.save(visual_state_dict, output_dir / f"{model_name}_visual.pth")
