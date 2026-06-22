@@ -3,23 +3,12 @@ import importlib
 import math
 import os
 import platform
-from enum import Enum as _EnumType
-
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-import torch.utils._pytree as _pytree
 from pytorch_lightning.strategies import DeepSpeedStrategy
 from pytorch_lightning.utilities import rank_zero_info, rank_zero_warn
 from torch.nn import functional as F
-
-# Patch pytree.register_constant to skip Enum subclasses (native in torch.compile since PyTorch 2.14+)
-# Prevents upstream torchao deprecation triggered by deepspeed import chain.
-_orig_reg = _pytree.register_constant
-_pytree.register_constant = lambda cls: (
-    cls if isinstance(cls, type) and issubclass(cls, _EnumType)
-    else _orig_reg(cls)
-)
 
 if importlib.util.find_spec("deepspeed"):
     import deepspeed
@@ -592,8 +581,9 @@ class MHCBlock(Block):
         H_post_att = 2 * torch.sigmoid(tilde_H_post_att)
         H_res_att = Sinkhorn_Knopp(tilde_H_res_att)
 
-        s_att = torch.einsum("b t e, b t c -> b t c", H_pre_att, h)
-        xx, v_first, pre_out = self.att(self.ln1(s_att), v_first)
+        # Gate after LayerNorm so it is not washed out
+        s_att_norm = H_pre_att.sum(dim=-1, keepdim=True) * self.ln1(h)
+        xx, v_first, pre_out = self.att(s_att_norm, v_first)
 
         Z_att = H_post_att.permute(2, 0, 1).unsqueeze(-1) * xx + torch.einsum(
             "b t i j, b t c -> i b t c", H_res_att, h
@@ -613,8 +603,10 @@ class MHCBlock(Block):
         s_ffn = torch.einsum("b t e, e b t c -> b t c", H_pre_ffn, Z_att)
         h_ffn = block_attn_res(V_blocks, s_ffn, self.mlp_res_proj, self.mlp_res_norm)
 
+        # Gate after LayerNorm so it is not washed out
+        h_ffn_norm = self.ln2(h_ffn)
         t_ffn = torch.stack(
-            [self.experts[e](self.ln2(H_pre_ffn[..., e].unsqueeze(-1) * h_ffn)) for e in range(4)],
+            [self.experts[e](H_pre_ffn[..., e].unsqueeze(-1) * h_ffn_norm) for e in range(4)],
             dim=0,
         )
 

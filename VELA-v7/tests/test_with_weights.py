@@ -10,7 +10,6 @@ forward/backward passes on CPU, and verifies:
 
 import math
 import os
-import warnings
 from argparse import Namespace
 
 import pytest
@@ -19,11 +18,6 @@ import torch
 os.environ["RWKV_JIT_ON"] = "0"
 os.environ["RWKV_HEAD_SIZE_A"] = "64"
 os.environ["RWKV_CTXLEN"] = "128"
-
-# Upstream deprecations we can't fix (deepspeed → torch.utils.mkldnn, pynvml)
-warnings.filterwarnings("ignore", message=".*torch.jit.script_method.*")
-warnings.filterwarnings("ignore", message=".*pynvml.*")
-warnings.filterwarnings("ignore", message=".*Enum subclass and is now natively supported by torch.compile.*")
 
 WEIGHTS_PATH = os.path.join(
     os.path.dirname(__file__), "..", "dummy_data/VisualRWKV-v0700-0B1-v1.0-20250109.pth"

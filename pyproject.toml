@@ -65,11 +65,6 @@ environments = [
 [tool.pytest.ini_options]
 pythonpath = ["VELA-v7"]
 testpaths = ["VELA-v7/tests"]
-filterwarnings = [
-    "ignore:.*torch.jit.script_method.*",
-    "ignore:.*pynvml.*",
-]
-
 [tool.setuptools]
 package-dir = {"Vela7" = "VELA-v7"}
 py-modules = ["Vela7.train", "Vela7.evaluate", "Vela7.evaluate_hfds", "Vela7.export", "Vela7.calc_ctxlen"]

@@ -103,7 +103,6 @@ if __name__ == "__main__":
 
     import datetime
     import os
-    import warnings
 
     import numpy as np
     import torch
@@ -121,11 +120,6 @@ if __name__ == "__main__":
         seed_everything(args.random_seed)
 
     np.set_printoptions(precision=4, suppress=True, linewidth=200)
-    warnings.filterwarnings(
-        "ignore", ".*Consider increasing the value of the `num_workers` argument*"
-    )
-    warnings.filterwarnings("ignore", ".*The progress bar already tracks a metric with the*")
-    warnings.filterwarnings("ignore", ".*Enum subclass and is now natively supported by torch.compile.*")
     # os.environ["WDS_SHOW_SEED"] = "1"
 
     args.my_timestamp = datetime.datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
