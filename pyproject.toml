@@ -73,6 +73,7 @@ packages = [
     "Vela7.src",
     "Vela7.src.siglino",
     "Vela7.src.siglino.kernels",
+    "Vela7.src.models",
     "Vela7.tokenizer",
     "Vela7.app",
     "Vela7.eval"
