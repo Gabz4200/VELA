@@ -16,17 +16,22 @@ VELA is a visual language model built on [RWKV-7](https://github.com/BlinkDL/RWK
 
 The architecture combines a multi-scale vision backbone (SAM, DINOv2, SigLIP) with an RWKV-7 language model, and (in v7.10+) adds action output heads that extend the model from visual perception and reasoning to closed-loop control for embodied AI tasks.
 
+**VELA-MultiImage**: The data format supports multiple images per sample with dynamic image feature insertion, enabling multi-image comprehension, video frame processing, and document understanding from image splits.
+
 ## Key Features
 
 - **Multi-Scale Vision Backbone**: Combines SAM (1024px), DINOv2 (448px), and **SigLino** (from tiiuae/siglino) features for rich, multi-scale visual representations. SigLino is locally vendored and uses custom optimized kernels (compiled SDPA on CPU, flex_attention on CUDA).
 - **Weight Quantization**: Integrates optional **torchao** weight quantization support (CUDA int4 weight-only and CPU int8 weight-only) for efficient low-memory footprint.
 - **Early Visual Fusion & In-place Visual Tokens**: Visual tokens are wrapped with `<img_start>` and `<img_end>` and injected in-place in the token sequence directly at their occurrences in documents/conversations, enabling dynamic early fusion of document images and text.
+- **Multi-Image Support**: The model supports any number of images per sample, with dynamic image feature insertion from single image splits, multi-images, and video frames.
 - **MHC MoE Layers (Layers 0-3)**: The first 4 block layers of the recurrent stack are configured as Dense MoE layers with 4 FFN experts. Routing is computed from WKV head pre-output projections using RMSNorm, linear projections, and a 20-iteration Sinkhorn-Knopp doubly stochastic normalization loop, following the Manifold-Constrained Hyper-Connections (mHC) formulation.
 - **ChatML Suffix Formatting**: Standardizes the chat format to a customizable metadata ChatML template (`<im_start>{role}:{metadata}\n{content}<im_end>\n`) with dynamic target masking that only trains on assistant responses and dynamically masks speaker headers.
 - **Linear-Time Inference**: Inherits RWKV's O(n) time complexity and O(1) memory — no quadratic attention bottleneck.
 - **Block Attention Residuals**: Replaces standard additive residual connections with **Block AttnRes**, which partitions layers into chunks and uses a learned, input-dependent cross-layer attention mechanism to selectively aggregate previous representations, solving the PreNorm hidden-state dilution problem.
 - **Multi-Resolution Support**: Dynamic tile splitting processes images at multiple aspect ratios (1:1, 1:2, 2:1, 1:3, 3:1).
-- **Action Output (v7.10+)**: Extends the unified recurrent model from perception and reasoning to action prediction for embodied AI tasks.
+- **VLA Action Head (v7.10+)**: Two parallel heads extend the model from perception and reasoning to action prediction:
+  - **Head 1 (JEPA World Model)**: InfoNCE contrastive loss on all tokens + Cross-Entropy on non-image tokens, forcing the model to learn physics, dynamics, and language structure.
+  - **Head 2 (Flow Matching Motor Controller)**: NitroGen-style DiT with Attention Residual conditioning from all backbone layers, predicting 16-step action chunks via flow-matching ODE solving.
 - **Distributed Training**: Built on PyTorch Lightning with DeepSpeed ZeRO for multi-GPU training across model scales.
 - **CUDA-Optimized WKV Kernel**: Custom WindBackstepping CUDA kernel for efficient RWKV-7 recurrence on GPU.
 
@@ -35,25 +40,82 @@ The architecture combines a multi-scale vision backbone (SAM, DINOv2, SigLIP) wi
 ```
 VELA/
 ├── README.md                    # This file
+├── AGENTS.md                    # Agent/LLM guidelines for the codebase
 ├── pyproject.toml               # Project configuration
 ├── LICENSE                      # Apache 2.0
 ├── VELA-arch.png                # Architecture diagram
 ├── rwkv_emoji.png               # Logo
 ├── VELA-v7/                     # VELA models based on RWKV-7
 │   ├── src/
-│   │   ├── model.py             # VELA and RWKV model definitions
+│   │   ├── models/
+│   │   │   ├── __init__.py      # Exports VLM, VLA
+│   │   │   ├── vlm.py           # VLM base model (RWKV, Block, MHCBlock, VLM)
+│   │   │   └── vla.py           # VLA model (InfoNCE+CE Head 1 + Flow Matching Head 2)
+│   │   ├── model.py             # Facade — re-exports from models/ for backward compat
 │   │   ├── dataset.py           # Multi-modal dataset and tokenization
 │   │   ├── trainer.py           # Training loop and LR schedule callbacks
+│   │   ├── config.py            # Vision tower checkpoint paths
 │   │   └── utils.py             # Utility functions
+│   │   └── siglino/              # Locally-vendored Falcon Vision (SigLino)
+│   │       └── kernels/          # CPU + CUDA attention kernels
 │   ├── app/                     # Inference demo / serving app
-│   ├── eval/                    # Benchmark evaluation tools (including PCA visualization)
+│   ├── eval/                    # Benchmark evaluation tools (PCA visualization)
+│   ├── tests/                   # Integration and unit tests
+│   │   ├── test_with_weights.py # Weight-based regression tests
+│   │   ├── test_moe_early_fusion.py  # MoE + ChatML tests
+│   │   └── test_vla.py          # VLA component tests (InfoNCE, FlowMatchingHead)
 │   ├── train.py                 # Training entry point
-│   └── evaluate.py              # Local evaluation entry point
+│   ├── evaluate.py              # Local evaluation entry point
+│   └── tokenizer/               # RWKV tokenizer data
 ├── cuda/                        # CUDA kernels (wkv7)
 │   ├── wkv7_cuda.cu
 │   └── wkv7_op.cpp
 └── download_huggingface.py      # HuggingFace model download
 ```
+
+## VLA Architecture
+
+The VLA extends VLM with two parallel heads that both consume the **Attention Residual** stream from all RWKV backbone layers:
+
+```
+┌─────────────────────────────────────────────────────┐
+│                  Input Sequence                      │
+│  <img> [VisionTokens] </img> <text> <act>           │
+└──────────────────────┬──────────────────────────────┘
+                       │
+┌──────────────────────▼──────────────────────────────┐
+│              RWKV Backbone (VLM)                     │
+│  Blocks 0-3: MHC MoE (4 experts each)               │
+│  Blocks 4+: Standard RWKV-7 blocks                  │
+│  → V_blocks (saved layer states)                    │
+│  → partial_block (final hidden state)               │
+└────┬──────────────────────────────────┬─────────────┘
+     │                                  │
+     ▼                                  ▼
+┌──────────────┐               ┌──────────────────┐
+│  Head 1      │               │  Head 2          │
+│  World Model │               │  Motor Controller│
+├──────────────┤               ├──────────────────┤
+│ InfoNCE      │               │ Flow Matching    │
+│ (all tokens) │               │ DiT (NitroGen)   │
+│ + CE         │               │                  │
+│ (non-image)  │               │ 16-step action   │
+│              │               │ chunk prediction │
+└──────────────┘               └──────────────────┘
+```
+
+**Head 1 (JEPA-style World Model):**
+- InfoNCE contrastive loss on all tokens — learns smooth continuous representations
+- Cross-Entropy loss on non-image tokens only (masked on image tokens) — ensures discrete token precision
+- Prevents averaging collapse in text while maintaining clean visual representations
+
+**Head 2 (Flow Matching Motor Controller):**
+- NitroGen-style DiT architecture with sinusoidal timestep encoding
+- AdaLayerNorm for timestep conditioning (scale/shift modulation)
+- Cross-attention on Attention Residuals from all backbone layers
+- Beta-distributed timestep sampling (α=1.5, β=1.0) during training
+- Euler-step ODE solving during inference (distilled to 1-2 steps)
+- Triggered by `<act>` token — dormant during text generation
 
 ## Installation
 
@@ -70,6 +132,13 @@ uv sync
 # Or with pip
 pip install -e .
 ```
+
+### Version Differences (v7 consolidated)
+
+- `multi_image_collate_fn` reverted to fixed shape `(B, N, C, H, W)` and restored image token padding by region count.
+- `encode_images` returns to the `(B, N, L, D)` processing path, `compress_visual_tokens` aggregates along the N dimension, and loss computation reverts to the v7.02 style.
+- `num_token_per_image` default restored to 256; script cleanup (kept `diff_stem_delete_common.py`, `rename.sh`, removed redundant data processing scripts).
+- Model split into `models/vlm.py` (VLM base) and `models/vla.py` (VLA with action heads).
 
 ## PCA Feature Visualization
 
@@ -106,6 +175,8 @@ python VELA-v7/eval/pca_vis.py \
 - **SAM**: Kirillov, A., et al. "Segment Anything." _ICCV 2023_.
 - **DINOv2**: Oquab, M., et al. "DINOv2: Learning Robust Visual Features without Supervision." _arXiv:2304.07193_ (2023).
 - **SigLIP**: Zhai, X., et al. "Sigmoid Loss for Language Image Pre-Training." _ICCV 2023_.
+- **NitroGen**: MineDojo. "NitroGen: Flow Matching for MineDojo Agent Control." _GitHub: MineDojo/NitroGen_ (2024).
+- **Flow Matching**: Lipman, Y., et al. "Flow Matching for Generative Modeling." _ICLR 2023_.
 
 ## License
 
